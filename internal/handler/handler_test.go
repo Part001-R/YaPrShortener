@@ -548,36 +548,110 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 	}
 }
 
-func Test_LongURLFromShort_SUCCESS(t *testing.T) {
+func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 
-	shortLong := NewShortLongURL()
-	shortLongHandler := &ShortLongT{
-		List: shortLong,
+	conf := &ShortLongT{
+		List: &ShortLongURLT{
+			ShorByLong:  make(map[string]string),
+			LongByShort: make(map[string]string),
+			Mu:          sync.RWMutex{},
+		},
+		DB: &ShortLongDBT{
+			DSN: "host=localhost port=1 user=AAA password=BBB dbname=CCC sslmode=disable",
+			Mu:  sync.RWMutex{},
+		},
+		BaseAddrShortURL: "http://localhost:8080/",
+		ServerAddr:       ":8080",
+		FileStoragePath:  "storage.json",
 	}
-	shortLongHandler.List.LongByShort = make(map[string]string)
 
+	// Подготовка памы
 	uLong := "https://practicum.yandex.ru/"
-
 	code, err := generateCode(6)
 	require.NoErrorf(t, err, "ожидалось отсутствие ошибки, а принято {%v}", err)
 
-	shortLongHandler.List.LongByShort[code] = uLong
+	conf.List.LongByShort[code] = uLong
+	conf.List.ShorByLong[uLong] = code
 
-	urlReq := fmt.Sprintf("http://localhost:8080/%s", code)
-	req := httptest.NewRequest(http.MethodGet, urlReq, nil)
-	res := httptest.NewRecorder()
+	// Данные для теста
+	testData := []struct {
+		nameT          string
+		urlT           string
+		methodReqT     string
+		longURLT       string
+		useDSNT        bool
+		initMockT      func(mock sqlmock.Sqlmock)
+		wantStatusCode int
+	}{
+		{
+			nameT:      "БД",
+			urlT:       conf.BaseAddrShortURL + code,
+			methodReqT: http.MethodGet,
+			longURLT:   "https://practicum.yandex.ru/",
+			useDSNT:    true,
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(`SELECT long FROM shortener`).
+					WithArgs(code).
+					WillReturnRows(sqlmock.NewRows([]string{"long"}).AddRow("https://practicum.yandex.ru/"))
+			},
+			wantStatusCode: http.StatusTemporaryRedirect,
+		},
 
-	shortLongHandler.LongURLFromShort(res, req)
-	resp := res.Result()
-	defer func() {
-		err := resp.Body.Close()
-		assert.NoErrorf(t, err, "ошибка при закрытии потока {%v}", err)
-	}()
+		{
+			nameT:      "Мапы и файл",
+			urlT:       conf.BaseAddrShortURL + code,
+			methodReqT: http.MethodGet,
+			longURLT:   "https://practicum.yandex.ru/",
+			useDSNT:    false,
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("SELECT long").
+					WithArgs(code).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+			},
+			wantStatusCode: http.StatusTemporaryRedirect,
+		},
+	}
 
-	rxHead := resp.Header.Get("Location")
+	for _, tt := range testData {
+		t.Run(tt.nameT, func(t *testing.T) {
 
-	require.Equalf(t, http.StatusTemporaryRedirect, resp.StatusCode, "ожидался код {%d}, а принят {%d}", http.StatusTemporaryRedirect, resp.StatusCode)
-	assert.Equalf(t, uLong, rxHead, "ожидался {%s}, а принято {%s}", uLong, rxHead)
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			tt.initMockT(mock)
+
+			req := httptest.NewRequest(tt.methodReqT, tt.urlT, nil)
+			res := httptest.NewRecorder()
+
+			if !tt.useDSNT {
+				conf.DB.DSN = ""
+			}
+
+			internalLongURLFromShort(db, conf, res, req)
+
+			resp := res.Result()
+			defer func() {
+				err := resp.Body.Close()
+				assert.NoErrorf(t, err, "ошибка закрытия потока {%v}", err)
+			}()
+
+			rxStr := resp.Header.Get("Location")
+
+			require.Equalf(t, tt.wantStatusCode, resp.StatusCode, "ожидался код {%d}, а принят {%d}", tt.wantStatusCode, resp.StatusCode)
+
+			if !tt.useDSNT { // Проверка работы с мапами и файлом
+
+				assert.Equalf(t, tt.longURLT, rxStr, "ожидался базовый URL <%s>, а принято <%s>", tt.longURLT, rxStr)
+
+			} else { // Проверка работы с БД
+
+				err = mock.ExpectationsWereMet()
+				require.NoError(t, err, "не все ожидания были выполнены")
+			}
+		})
+	}
+
 }
 
 func Test_LongURLFromShort_FAULT(t *testing.T) {

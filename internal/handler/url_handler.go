@@ -240,24 +240,13 @@ func (sl *ShortLongT) LongURLFromShort(w http.ResponseWriter, r *http.Request) {
 	sl.List.Mu.RLock()
 	defer sl.List.Mu.RUnlock()
 
-	if r.Method != http.MethodGet {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
-	}
+	// Подключение к БД
+	var db *sql.DB
+	var err error
 
-	rxData := r.URL.Path[1:]
-	if len(rxData) == 0 {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
-	}
+	if sl.DB.DSN != "" {
 
-	short := string(rxData)
-	var long string
-	var ok bool
-
-	if sl.DB.DSN != "" { // БД
-
-		db, err := sql.Open("postgres", sl.DB.DSN)
+		db, err = sql.Open("postgres", sl.DB.DSN)
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
@@ -265,25 +254,9 @@ func (sl *ShortLongT) LongURLFromShort(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			_ = db.Close()
 		}()
-
-		long, err = readLongByShortDB(db, short)
-		if err != nil {
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
-
-	} else { // Мапа
-
-		long, ok = sl.List.LongByShort[short]
-		if !ok {
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		}
-		long = strings.Trim(long, "\"")
 	}
 
-	w.Header().Set("Location", long)
-	w.WriteHeader(http.StatusTemporaryRedirect)
+	internalLongURLFromShort(db, sl, w, r)
 }
 
 func (sl *ShortLongT) ShortURLFromLongJSON(w http.ResponseWriter, r *http.Request) {
@@ -1123,6 +1096,72 @@ func internalShortURLFromLong(db *sql.DB, sl *ShortLongT, w http.ResponseWriter,
 	w.Write([]byte(strResult))
 }
 
+// Функция содержит логику обработчика LongURLFromShort.
+//
+// Параметры:
+//
+// db - указатель на БД
+// sl - конфигурация.
+// w - http.ResponseWriter.
+// r - *http.Request.
+func internalLongURLFromShort(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http.Request) {
+
+	// Проверка аргументов
+	if sl == nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if db == nil && sl.DB.DSN != "" {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if w == nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if r == nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	// Логика
+	rxData := r.URL.Path[1:]
+	if len(rxData) == 0 {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	short := string(rxData)
+	var long string
+	var ok bool
+	var err error
+
+	if sl.DB.DSN != "" { // БД
+
+		long, err = readLongByShortDB(db, short)
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+
+	} else { // Мапа
+		long, ok = sl.List.LongByShort[short]
+		if !ok {
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		long = strings.Trim(long, "\"")
+	}
+
+	w.Header().Set("Location", long)
+	w.WriteHeader(http.StatusTemporaryRedirect)
+
+}
+
 // Функция содержит логику обработчика ShortURLFromLongJSON.
 //
 // Параметры:
@@ -1275,7 +1314,6 @@ func readLongByShortDB(db *sql.DB, shortURL string) (string, error) {
 // Параметры:
 //
 // str - строка, для записи в файл.
-
 /*
 func WriteInFileDebugData(str string) {
 	filename := "debug.txt"
