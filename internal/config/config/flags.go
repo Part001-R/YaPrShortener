@@ -21,7 +21,7 @@ func ParseFlags() ConfigT {
 	var flags = ConfigT{}
 
 	// URL
-	flag.StringVar(&flags.ServerAddr, "a", "localhost:8080", "адрес и порт сервера")
+	flag.StringVar(&flags.ServerAddr, "a", ":8080", "адрес и порт сервера")
 	flag.StringVar(&flags.BaseAddrShortURL, "b", "http://localhost:8080/", "базовый адрес для коротких URL")
 	flag.StringVar(&flags.LogLevel, "l", "info", "уровень логирования")
 	flag.StringVar(&flags.FileStoragePath, "f", "storage.json", "хранилище ссылок")

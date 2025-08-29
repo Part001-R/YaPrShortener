@@ -884,7 +884,7 @@ func Test_ShortURLFromLongBatch_SUCCESS(t *testing.T) {
 
 			tt.initMockT(mock)
 
-			shortData, err := allActionsStorageBatchDBURL(db, tt.batchT)
+			shortData, err := allActionsStorageBatchDBURL(db, tt.batchT, "http://localhost:8080/")
 			require.NoErrorf(t, err, "ошибка при работе с БД <%v>", err)
 
 			assert.Equalf(t, len(tt.batchT), len(shortData), "ожидаемая длинна слайса <%d> не соответствует полученному <%d>", len(tt.batchT), len(shortData))
@@ -972,7 +972,7 @@ func Test_ShortURLFromLongBatch_FAULT(t *testing.T) {
 				tt.batchT = nil
 			}
 
-			rx, err := allActionsStorageBatchDBURL(db, tt.batchT)
+			rx, err := allActionsStorageBatchDBURL(db, tt.batchT, "http://localhost:8080/")
 			_ = rx
 
 			assert.Equalf(t, tt.wantErrorT, err.Error(), "ожидалась ошибка <%s> а принято <%s>", tt.wantErrorT, err.Error())

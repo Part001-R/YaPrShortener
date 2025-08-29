@@ -152,8 +152,6 @@ func (sl *ShortLongT) ShortURLFromLongBatch(w http.ResponseWriter, r *http.Reque
 	sl.DB.Mu.RLock()
 	defer sl.DB.Mu.RUnlock()
 
-	w.Header().Set("Content-Type", "text/plain")
-
 	if r.Method != http.MethodPost {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
@@ -197,7 +195,7 @@ func (sl *ShortLongT) ShortURLFromLongBatch(w http.ResponseWriter, r *http.Reque
 			_ = db.Close()
 		}()
 
-		batchShortURL, err = allActionsStorageBatchDBURL(db, rxLongURLBatch)
+		batchShortURL, err = allActionsStorageBatchDBURL(db, rxLongURLBatch, sl.BaseAddrShortURL)
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
@@ -217,7 +215,7 @@ func (sl *ShortLongT) ShortURLFromLongBatch(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		batchShortURL, err = prapareBatchResponse(sl.List.LongByShort, rxLongURLBatch)
+		batchShortURL, err = prapareBatchResponse(sl.List.LongByShort, rxLongURLBatch, sl)
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
@@ -230,6 +228,8 @@ func (sl *ShortLongT) ShortURLFromLongBatch(w http.ResponseWriter, r *http.Reque
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
+
+	w.Header().Set("Content-Type", "application/json")
 
 	w.WriteHeader(http.StatusCreated)
 	w.Write(txData)
@@ -252,14 +252,35 @@ func (sl *ShortLongT) LongURLFromShort(w http.ResponseWriter, r *http.Request) {
 	}
 
 	short := string(rxData)
+	var long string
+	var ok bool
 
-	long, ok := sl.List.LongByShort[short]
-	if !ok {
+	if sl.DB.DSN != "" { // БД
 
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
+		db, err := sql.Open("postgres", sl.DB.DSN)
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		defer func() {
+			_ = db.Close()
+		}()
+
+		long, err = readLongByShortDB(db, short)
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+
+	} else { // Мапа
+
+		long, ok = sl.List.LongByShort[short]
+		if !ok {
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		long = strings.Trim(long, "\"")
 	}
-	long = strings.Trim(long, "\"")
 
 	w.Header().Set("Location", long)
 	w.WriteHeader(http.StatusTemporaryRedirect)
@@ -807,7 +828,7 @@ func actionStorageDBURLtx(tx *sql.Tx, longURL string) (string, error) {
 //
 // db - указатель на БД.
 // batchLongURL - массив длинных ссылок.
-func allActionsStorageBatchDBURL(db *sql.DB, batchLongURL []rxLongURLBatchT) ([]txShortURLBatchT, error) {
+func allActionsStorageBatchDBURL(db *sql.DB, batchLongURL []rxLongURLBatchT, baseAddrShortURL string) ([]txShortURLBatchT, error) {
 
 	// Проверка аргументов
 	if db == nil {
@@ -869,7 +890,7 @@ func allActionsStorageBatchDBURL(db *sql.DB, batchLongURL []rxLongURLBatchT) ([]
 		// заполнение возвращаемого массива
 		var el txShortURLBatchT
 		el.CorrelationID = v.CorrelationID
-		el.ShortURL = shortURL
+		el.ShortURL = baseAddrShortURL + shortURL
 
 		txData = append(txData, el)
 	}
@@ -922,7 +943,7 @@ func storageBatchMap(batchLongURL []rxLongURLBatchT, sByL, lByS map[string]strin
 //
 // lByS - мапа где ключ - короткое представление, значение - длинный URL.
 // batchLongURL - принятый массив длинных ссылок.
-func prapareBatchResponse(lByS map[string]string, batchLongURL []rxLongURLBatchT) ([]txShortURLBatchT, error) {
+func prapareBatchResponse(lByS map[string]string, batchLongURL []rxLongURLBatchT, conf *ShortLongT) ([]txShortURLBatchT, error) {
 
 	// Проверка аргументов
 	if lByS == nil {
@@ -949,7 +970,7 @@ func prapareBatchResponse(lByS map[string]string, batchLongURL []rxLongURLBatchT
 
 			if l == v.OriginalURL {
 				el.CorrelationID = strings.Trim(v.CorrelationID, "\"")
-				el.ShortURL = s
+				el.ShortURL = conf.BaseAddrShortURL + s
 
 				txData = append(txData, el)
 				break
@@ -1224,6 +1245,29 @@ func readShortByLongDB(db *sql.DB, longURL string) (string, error) {
 	}
 
 	return shortURL, nil
+}
+
+// Функция с содержимым запроса к БД для получения короткого представления по исходному URL. Возвращается короткое представление и ошибка.
+//
+// Параметры:
+//
+// db - указатель на БД.
+// longURL - длинное представление URL.
+func readLongByShortDB(db *sql.DB, shortURL string) (string, error) {
+
+	var longURL string
+
+	query := `SELECT long FROM shortener WHERE short = $1`
+	err := db.QueryRow(query, shortURL).Scan(&longURL)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", fmt.Errorf("URL не найден: %s", shortURL)
+		}
+		return "", fmt.Errorf("ошибка при выполнении запроса: %v", err)
+	}
+
+	return longURL, nil
 }
 
 // Вспомогательная функция для отладки работы приложения.

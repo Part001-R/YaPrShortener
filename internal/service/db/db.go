@@ -29,8 +29,17 @@ func MigrationUpDB(config config.ConfigT) error {
 		return fmt.Errorf("ошибка создания миграций: <%w>", err)
 	}
 
+	/*
+		m, err := migrate.NewWithDatabaseInstance(
+			"file://../../migrations",
+			"postgres", driver)
+		if err != nil {
+			return fmt.Errorf("ошибка работы с файлами: <%w>", err)
+		}
+	*/
+
 	m, err := migrate.NewWithDatabaseInstance(
-		"file://../../migrations",
+		"file://migrations",
 		"postgres", driver)
 	if err != nil {
 		return fmt.Errorf("ошибка работы с файлами: <%w>", err)
