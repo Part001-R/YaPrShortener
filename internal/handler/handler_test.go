@@ -654,41 +654,78 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 
 }
 
-func Test_LongURLFromShort_FAULT(t *testing.T) {
+func Test_internalLongURLFromShort_FAULT(t *testing.T) {
 
-	shortLong := &ShortLongT{
-		List:             &ShortLongURLT{},
-		BaseAddrShortURL: ":8080/",
+	conf := &ShortLongT{
+		List: &ShortLongURLT{
+			ShorByLong:  make(map[string]string),
+			LongByShort: make(map[string]string),
+			Mu:          sync.RWMutex{},
+		},
+		DB: &ShortLongDBT{
+			DSN: "host=localhost port=1 user=AAA password=BBB dbname=CCC sslmode=disable",
+			Mu:  sync.RWMutex{},
+		},
+		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
+		FileStoragePath:  "storage.json",
 	}
 
+	// Данные для теста
 	testData := []struct {
 		nameT          string
 		urlT           string
 		methodReqT     string
+		longURLT       string
+		initMockT      func(mock sqlmock.Sqlmock)
+		useConf        bool
 		wantStatusCode int
 	}{
 		{
-			nameT:          "wrong method",
-			urlT:           "http://localhost:8080/EwHXdJfB",
-			methodReqT:     http.MethodPost,
+			nameT:      "Метод POST",
+			urlT:       conf.BaseAddrShortURL,
+			methodReqT: http.MethodPost,
+			longURLT:   "https://practicum.yandex.ru/",
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(`SELECT long FROM shortener`).
+					WithArgs().
+					WillReturnRows(sqlmock.NewRows([]string{"long"}).AddRow("https://practicum.yandex.ru/"))
+			},
+			useConf:        true,
 			wantStatusCode: http.StatusBadRequest,
 		},
 		{
-			nameT:          "missing {id}",
-			urlT:           "http://localhost:8080/",
-			methodReqT:     http.MethodGet,
-			wantStatusCode: http.StatusBadRequest,
+			nameT:      "Нет указателя на conf",
+			urlT:       conf.BaseAddrShortURL,
+			methodReqT: http.MethodGet,
+			longURLT:   "https://practicum.yandex.ru/",
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(`SELECT long FROM shortener`).
+					WithArgs().
+					WillReturnRows(sqlmock.NewRows([]string{"long"}).AddRow("https://practicum.yandex.ru/"))
+			},
+			useConf:        false,
+			wantStatusCode: http.StatusInternalServerError,
 		},
 	}
 
 	for _, tt := range testData {
 		t.Run(tt.nameT, func(t *testing.T) {
 
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			tt.initMockT(mock)
+
 			req := httptest.NewRequest(tt.methodReqT, tt.urlT, nil)
 			res := httptest.NewRecorder()
 
-			shortLong.LongURLFromShort(res, req)
+			if !tt.useConf {
+				conf = nil
+			}
+
+			internalLongURLFromShort(db, conf, res, req)
 
 			resp := res.Result()
 			defer func() {
