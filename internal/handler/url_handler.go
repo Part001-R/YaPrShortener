@@ -344,6 +344,11 @@ func (sl *ShortLongT) LoadFileURL() error {
 
 func (sl *ShortLongT) PingDB(w http.ResponseWriter, r *http.Request) {
 
+	if sl.DB.DSN == "" {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
 	// Подключение
 	db, err := sql.Open("postgres", sl.DB.DSN)
 	if err != nil {
@@ -1226,8 +1231,9 @@ func readShortByLongDB(db *sql.DB, longURL string) (string, error) {
 // Параметры:
 //
 // str - строка, для записи в файл.
+
 /*
-func writeInFileDebugData(str string) {
+func WriteInFileDebugData(str string) {
 	filename := "debug.txt"
 
 	file, err := os.OpenFile(filename, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666)

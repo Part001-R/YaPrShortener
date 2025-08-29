@@ -13,6 +13,7 @@ import (
 
 	"github.com/Part001-R/YaPrShortener/internal/config/config"
 	"github.com/Part001-R/YaPrShortener/internal/handler"
+	"github.com/Part001-R/YaPrShortener/internal/service/db"
 	"github.com/Part001-R/YaPrShortener/internal/service/logger"
 	"github.com/go-chi/chi"
 	"go.uber.org/zap"
@@ -58,6 +59,12 @@ func prepare() (*paramsURLT, error) {
 	err := logger.Initialize(flags.LogLevel)
 	if err != nil {
 		return &paramsURLT{}, fmt.Errorf("ошибка в prepare: функия Initialize вернула ошибку -> <%w>", err)
+	}
+
+	// БД
+	err = db.MigrationUpDB(flags)
+	if err != nil {
+		return &paramsURLT{}, fmt.Errorf("ошибка в prepare: функия MigrationDB вернула ошибку -> <%w>", err)
 	}
 
 	// Метрики
@@ -306,7 +313,7 @@ func handlersShortener(cr *chi.Mux, p *paramsURLT) error {
 	cr.Get("/ping", handler.Middleware(http.HandlerFunc(p.storageLongShort.PingDB)))
 	cr.Post("/api/shorten/batch", handler.Middleware(http.HandlerFunc(p.storageLongShort.ShortURLFromLongBatch)))
 
-	cr.Get("/api/user/urls", handler.Middleware(http.HandlerFunc(p.storageLongShort.UserURLs))) //req.Get("/api/user/urls")
+	cr.Get("/api/user/urls", handler.Middleware(http.HandlerFunc(p.storageLongShort.UserURLs)))
 
 	return nil
 }
