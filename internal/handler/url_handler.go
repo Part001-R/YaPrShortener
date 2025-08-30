@@ -152,41 +152,16 @@ func (sl *ShortLongT) ShortURLFromLongBatch(w http.ResponseWriter, r *http.Reque
 	sl.DB.Mu.RLock()
 	defer sl.DB.Mu.RUnlock()
 
-	if r.Method != http.MethodPost {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
-	}
+	sl.BaseAddrShortURL = strings.TrimSuffix(sl.BaseAddrShortURL, "/")
+	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
 
-	// Чтение тела запроса
-	rxData, err := io.ReadAll(r.Body)
-	defer func() {
-		_ = r.Body.Close()
-	}()
-	if err != nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
+	// Подключение к БД
+	var db *sql.DB
+	var err error
 
-	// Десериализация принятых данных
-	rxLongURLBatch := make([]rxLongURLBatchT, 0)
+	if sl.DB.DSN != "" {
 
-	err = json.Unmarshal(rxData, &rxLongURLBatch)
-	if err != nil {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
-	}
-	if len(rxLongURLBatch) == 0 {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
-	}
-
-	// Обработка
-	batchShortURL := make([]txShortURLBatchT, 0)
-	_ = batchShortURL // чтобы редактор не подчёркивал желтым, как неиспользуемую
-
-	if sl.DB.DSN != "" { // сохранение пары соответствия в БД
-
-		db, err := sql.Open("postgres", sl.DB.DSN)
+		db, err = sql.Open("postgres", sl.DB.DSN)
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
@@ -194,45 +169,10 @@ func (sl *ShortLongT) ShortURLFromLongBatch(w http.ResponseWriter, r *http.Reque
 		defer func() {
 			_ = db.Close()
 		}()
-
-		batchShortURL, err = allActionsStorageBatchDBURL(db, rxLongURLBatch, sl.BaseAddrShortURL)
-		if err != nil {
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
-
-	} else { // сохранение пары соответствия в мапы и файл
-
-		err = storageBatchMap(rxLongURLBatch, sl.List.ShorByLong, sl.List.LongByShort)
-		if err != nil {
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
-
-		err = storageFileURL(sl.FileStoragePath, sl.List.ShorByLong)
-		if err != nil {
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
-
-		batchShortURL, err = prapareBatchResponse(sl.List.LongByShort, rxLongURLBatch, sl)
-		if err != nil {
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
 	}
 
-	// Сериализация и ответ
-	txData, err := json.Marshal(batchShortURL)
-	if err != nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-
-	w.WriteHeader(http.StatusCreated)
-	w.Write(txData)
+	// Вся логика обработчика
+	internalShortURLFromLongBatch(db, sl, w, r)
 }
 
 func (sl *ShortLongT) LongURLFromShort(w http.ResponseWriter, r *http.Request) {
@@ -1307,6 +1247,115 @@ func readLongByShortDB(db *sql.DB, shortURL string) (string, error) {
 	}
 
 	return longURL, nil
+}
+
+// Функция содержит логику обработчика ShortURLFromLongBatch.
+//
+// Параметры:
+//
+// db - указатель на БД
+// sl - конфигурация.
+// w - http.ResponseWriter.
+// r - *http.Request.
+func internalShortURLFromLongBatch(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http.Request) {
+
+	// Проверка аргументов
+	if db == nil && sl.DB.DSN != "" {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if sl == nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	if r.Header.Get("Content-Type") != `application/json` {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	// Чтение тела запроса
+	rxData, err := io.ReadAll(r.Body)
+	defer func() {
+		_ = r.Body.Close()
+	}()
+	if err != nil {
+
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Десериализация принятых данных
+	rxLongURLBatch := make([]rxLongURLBatchT, 0)
+
+	err = json.Unmarshal(rxData, &rxLongURLBatch)
+	if err != nil {
+
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	if len(rxLongURLBatch) == 0 {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	// Обработка
+	batchShortURL := make([]txShortURLBatchT, 0)
+	_ = batchShortURL // чтобы редактор не подчёркивал желтым, как неиспользуемую
+
+	if sl.DB.DSN != "" { // сохранение пары соответствия в БД
+
+		batchShortURL, err = allActionsStorageBatchDBURL(db, rxLongURLBatch, sl.BaseAddrShortURL)
+		if err != nil {
+
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+
+	} else { // сохранение пары соответствия в мапы и файл
+
+		err = storageBatchMap(rxLongURLBatch, sl.List.ShorByLong, sl.List.LongByShort)
+		if err != nil {
+
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+
+		err = storageFileURL(sl.FileStoragePath, sl.List.ShorByLong)
+		if err != nil {
+
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+
+		batchShortURL, err = prapareBatchResponse(sl.List.LongByShort, rxLongURLBatch, sl)
+		if err != nil {
+
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Сериализация и ответ
+	txData, err := json.Marshal(batchShortURL)
+	if err != nil {
+
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	w.WriteHeader(http.StatusCreated)
+	w.Write(txData)
 }
 
 // Вспомогательная функция для отладки работы приложения.

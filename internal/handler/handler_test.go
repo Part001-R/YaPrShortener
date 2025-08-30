@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1414,6 +1415,382 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 
 			_, err = workWithRxData(db, conf, tt.longURLT)
 			assert.Equalf(t, tt.wantErrorT, err.Error(), "ожидалась ошибка <%s>, а принято <%s>", tt.wantErrorT, err.Error())
+		})
+	}
+}
+
+func Test_Middleware_SUCCESS(t *testing.T) {
+
+	// Обработчик для теста Middleware
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	mw := Middleware(testHandler)
+
+	testData := []struct {
+		nameTest   string
+		methodReqT string
+		reqURLT    string
+		encodingT  string
+		wantCodeT  int
+	}{
+		{
+			nameTest:   "успешный запрос с gzip",
+			methodReqT: "http.MethodGet",
+			reqURLT:    "/",
+			encodingT:  "gzip",
+			wantCodeT:  http.StatusOK,
+		},
+	}
+
+	for _, tt := range testData {
+		t.Run(tt.nameTest, func(t *testing.T) {
+
+			req := httptest.NewRequest(tt.methodReqT, tt.reqURLT, nil)
+			req.Header.Set("Accept-Encoding", tt.encodingT)
+			rr := httptest.NewRecorder()
+
+			mw.ServeHTTP(rr, req)
+
+			reader, err := gzip.NewReader(rr.Body)
+			if err != nil {
+				t.Fatalf("Ошибка при создании gzip reader: %s", err)
+			}
+			defer reader.Close()
+
+			decompressedBody, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatalf("Ошибка при чтении декомпрессированного тела: %s", err)
+			}
+
+			assert.Equal(t, tt.wantCodeT, rr.Code)
+			assert.Equal(t, "OK", string(decompressedBody))
+
+		})
+	}
+}
+
+func Test_Middleware_FAULT(t *testing.T) {
+
+	// Обработчик для теста Middleware
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	mw := Middleware(testHandler)
+
+	testData := []struct {
+		nameTest         string
+		methodReqT       string
+		reqURLT          string
+		acceptEncodingT  string
+		contentEncodingT string
+		wantCodeT        int
+	}{
+		{
+			nameTest:         "неподдерживаемая запрашиваемая кодировка",
+			methodReqT:       http.MethodGet,
+			reqURLT:          "/",
+			acceptEncodingT:  "AAA",
+			contentEncodingT: "gzip",
+			wantCodeT:        http.StatusBadRequest,
+		},
+		{
+			nameTest:         "неподдерживаемая принятая кодировка",
+			methodReqT:       http.MethodGet,
+			reqURLT:          "/",
+			acceptEncodingT:  "gzip",
+			contentEncodingT: "AAA",
+			wantCodeT:        http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range testData {
+		t.Run(tt.nameTest, func(t *testing.T) {
+
+			req := httptest.NewRequest(tt.methodReqT, tt.reqURLT, nil)
+			req.Header.Set("Accept-Encoding", tt.acceptEncodingT)
+			req.Header.Set("Content-Encoding", tt.contentEncodingT)
+			rr := httptest.NewRecorder()
+
+			mw.ServeHTTP(rr, req)
+
+			assert.Equalf(t, http.StatusBadRequest, rr.Code, "ожидался код <%d>, а принят <%d>", http.StatusBadRequest, rr.Code)
+		})
+	}
+}
+
+func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
+
+	// Конфигурация
+	conf := &ShortLongT{
+		List: &ShortLongURLT{
+			ShorByLong:  make(map[string]string),
+			LongByShort: make(map[string]string),
+			Mu:          sync.RWMutex{},
+		},
+		DB: &ShortLongDBT{
+			DSN: "host=localhost port=1 user=AAA password=BBB dbname=CCC sslmode=disable",
+			Mu:  sync.RWMutex{},
+		},
+		BaseAddrShortURL: "http://localhost:8080/",
+		ServerAddr:       ":8080",
+		FileStoragePath:  "storage.json",
+	}
+
+	// Данные для тестов
+	testData := []struct {
+		nameT          string
+		urlT           string
+		methodReqT     string
+		batchLongURLT  []rxLongURLBatchT
+		initMockT      func(mock sqlmock.Sqlmock)
+		useDSN         bool
+		wantStatusCode int
+	}{
+		{
+			nameT:      "БД",
+			urlT:       "http://localhost:8080/api/shorten/batch",
+			methodReqT: http.MethodPost,
+			batchLongURLT: []rxLongURLBatchT{
+				{
+					CorrelationID: "12345",
+					OriginalURL:   "https://practicum.yandex.ru/",
+				},
+				{
+					CorrelationID: "67890",
+					OriginalURL:   "https://example.com/",
+				},
+			},
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://example.com/", sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(2, 1))
+
+				mock.ExpectCommit()
+			},
+			useDSN:         true,
+			wantStatusCode: http.StatusCreated,
+		},
+		{
+			nameT:      "Мапы",
+			urlT:       "http://localhost:8080/api/shorten/batch",
+			methodReqT: http.MethodPost,
+			batchLongURLT: []rxLongURLBatchT{
+				{
+					CorrelationID: "11111",
+					OriginalURL:   "https://practicum.yandex.ru/",
+				},
+				{
+					CorrelationID: "22222",
+					OriginalURL:   "https://example.com/",
+				},
+			},
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://example.com/", sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(2, 1))
+
+				mock.ExpectCommit()
+			},
+			useDSN:         false,
+			wantStatusCode: http.StatusCreated,
+		},
+	}
+
+	// Тесты
+	for _, tt := range testData {
+		t.Run(tt.nameT, func(t *testing.T) {
+
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			tt.initMockT(mock)
+
+			dataByte, err := json.Marshal(tt.batchLongURLT)
+			require.NoErrorf(t, err, "ошибка при сериализации данных")
+
+			body := bytes.NewBuffer(dataByte)
+
+			req := httptest.NewRequest(tt.methodReqT, tt.urlT, body)
+			res := httptest.NewRecorder()
+
+			req.Header.Set("Content-Type", "application/json")
+
+			if !tt.useDSN {
+				conf.DB.DSN = ""
+			}
+
+			internalShortURLFromLongBatch(db, conf, res, req)
+
+			resp := res.Result()
+			defer func() {
+				err := resp.Body.Close()
+				assert.NoErrorf(t, err, "ошибка закрытия потока {%v}", err)
+			}()
+
+			require.Equalf(t, tt.wantStatusCode, resp.StatusCode, "ожидался код <%d>, а принят <%d>", tt.wantStatusCode, resp.StatusCode)
+
+			// Результат
+			rxByte, err := io.ReadAll(resp.Body)
+			require.NoErrorf(t, err, "ошибка при чтении тела ответа")
+
+			batchShortURL := make([]txShortURLBatchT, 0)
+
+			err = json.Unmarshal(rxByte, &batchShortURL)
+			require.NoErrorf(t, err, "ошибка десериализации")
+
+			require.Equalf(t, tt.batchLongURLT[0].CorrelationID, batchShortURL[0].CorrelationID, "ожидалось <%s>, а принято <%s>", tt.batchLongURLT[0].CorrelationID, batchShortURL[0].CorrelationID)
+			require.Equalf(t, tt.batchLongURLT[1].CorrelationID, batchShortURL[1].CorrelationID, "ожидалось <%s>, а принято <%s>", tt.batchLongURLT[1].CorrelationID, batchShortURL[1].CorrelationID)
+
+			assert.NotEqualf(t, 0, len(batchShortURL[0].ShortURL), "нет содержимого сокращения в ответе у id <%d>", 0)
+			assert.NotEqualf(t, 0, len(batchShortURL[1].ShortURL), "нет содержимого сокращения в ответе у id <%d>", 1)
+
+			// Проверка, что все mock выполнены
+			if tt.useDSN {
+				err = mock.ExpectationsWereMet()
+				require.NoError(t, err, "не все ожидания были выполнены")
+			}
+		})
+	}
+}
+
+func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
+
+	conf := &ShortLongT{
+		List: &ShortLongURLT{
+			ShorByLong:  make(map[string]string),
+			LongByShort: make(map[string]string),
+			Mu:          sync.RWMutex{},
+		},
+		DB: &ShortLongDBT{
+			DSN: "host=localhost port=1 user=AAA password=BBB dbname=CCC sslmode=disable",
+			Mu:  sync.RWMutex{},
+		},
+		BaseAddrShortURL: "http://localhost:8080/",
+		ServerAddr:       ":8080",
+		FileStoragePath:  "storage.json",
+	}
+
+	testData := []struct {
+		nameT          string
+		urlT           string
+		methodReqT     string
+		bodyT          string
+		initMockT      func(mock sqlmock.Sqlmock)
+		useDBT         bool
+		useConfT       bool
+		contentTypeT   string
+		wantStatusCode int
+	}{
+		{
+			nameT:      "Неподдерживаемый метод",
+			urlT:       "http://localhost:8080/",
+			methodReqT: http.MethodGet,
+			bodyT:      "https://practicum.yandex.ru/",
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+			},
+			useDBT:         true,
+			useConfT:       true,
+			contentTypeT:   "application/json",
+			wantStatusCode: http.StatusBadRequest,
+		},
+		{
+			nameT:      "пустое тело",
+			urlT:       "http://localhost:8080/",
+			methodReqT: http.MethodPost,
+			bodyT:      "",
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+			},
+			useDBT:         true,
+			useConfT:       true,
+			contentTypeT:   "application/json",
+			wantStatusCode: http.StatusBadRequest,
+		},
+		{
+			nameT:      "Нет указателя на БД",
+			urlT:       "http://localhost:8080/",
+			methodReqT: http.MethodPost,
+			bodyT:      "https://practicum.yandex.ru/",
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+			},
+			useDBT:         false,
+			useConfT:       true,
+			contentTypeT:   "application/json",
+			wantStatusCode: http.StatusInternalServerError,
+		},
+		{
+			nameT:      "Нет указателя на конфигурацию",
+			urlT:       "http://localhost:8080/",
+			methodReqT: http.MethodPost,
+			bodyT:      "https://practicum.yandex.ru/",
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+			},
+			useDBT:         true,
+			useConfT:       false,
+			contentTypeT:   "application/json",
+			wantStatusCode: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range testData {
+		t.Run(tt.nameT, func(t *testing.T) {
+
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			tt.initMockT(mock)
+
+			bodyReq := bytes.NewBuffer([]byte(tt.bodyT))
+
+			req := httptest.NewRequest(tt.methodReqT, tt.urlT, bodyReq)
+			res := httptest.NewRecorder()
+
+			if !tt.useDBT {
+				db = nil
+			}
+			if !tt.useConfT {
+				conf = nil
+			}
+
+			internalShortURLFromLongBatch(db, conf, res, req)
+
+			resp := res.Result()
+			defer func() {
+				err := resp.Body.Close()
+				assert.NoErrorf(t, err, "ошибка при закрытии потока {%v}", err)
+			}()
+
+			assert.Equalf(t, tt.wantStatusCode, resp.StatusCode, "ожидалcя код {%d}, а принят {%d}", tt.wantStatusCode, resp.StatusCode)
 		})
 	}
 }
