@@ -52,6 +52,8 @@ func MigrationUpDB(config config.ConfigT) error {
 		pathFilesMigration = "file://../migrations"
 	case "YaPrShortener":
 		pathFilesMigration = "file://migrations"
+	case "YaPrShortener/YaPrShortener": // для тестов в github
+		pathFilesMigration = "file://migrations"
 	default:
 		return errors.New("не найдено совпадение пути в switch")
 	}
