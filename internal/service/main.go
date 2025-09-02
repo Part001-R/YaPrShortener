@@ -1,6 +1,7 @@
 package service
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/Part001-R/YaPrShortener/internal/config/config"
 	"github.com/Part001-R/YaPrShortener/internal/handler"
+	"github.com/Part001-R/YaPrShortener/internal/service/db"
 	"github.com/Part001-R/YaPrShortener/internal/service/logger"
 	"github.com/go-chi/chi"
 	"go.uber.org/zap"
@@ -20,6 +22,7 @@ import (
 
 type paramsURLT struct {
 	flags            config.ConfigT
+	closeConDB       func()
 	storageMetrics   handler.MetricsI
 	storageLongShort handler.ShortLongI
 }
@@ -60,9 +63,28 @@ func prepare() (*paramsURLT, error) {
 		return &paramsURLT{}, fmt.Errorf("ошибка в prepare: функия Initialize вернула ошибку -> <%w>", err)
 	}
 
+	// БД
+	var dbPtr *sql.DB
+	var funcCloseDB func()
+
+	if flags.DSNDB != "" {
+
+		dbPtr, funcCloseDB, err = db.ConnectDB(flags.DSNDB)
+		if err != nil {
+			logger.Log.Error("Ошибка при подключении к БД",
+				zap.Error(err),
+			)
+		}
+
+		err = db.MigrationUpDB(dbPtr)
+		if err != nil {
+			return &paramsURLT{}, fmt.Errorf("ошибка в prepare: функия MigrationDB вернула ошибку -> <%w>", err)
+		}
+	}
+
 	// Метрики
 	metrics := handler.NewMetrics()
-	metricsDB := handler.NewMetricsDB(flags.DSNDB)
+	metricsDB := handler.NewMetricsDB(dbPtr)
 
 	storageMetrics := handler.NewMetricsStorage(metrics, metricsDB, flags)
 
@@ -75,7 +97,7 @@ func prepare() (*paramsURLT, error) {
 
 	// Ссылки
 	shortLong := handler.NewShortLongURL()
-	shortLongDB := handler.NewShortLongURLDB(flags.DSNDB)
+	shortLongDB := handler.NewShortLongURLDB(dbPtr)
 
 	storageLongShort := handler.NewShortLongStorage(shortLong, shortLongDB, flags)
 	err = storageLongShort.LoadFileURL()
@@ -86,6 +108,7 @@ func prepare() (*paramsURLT, error) {
 	// Результат
 	return &paramsURLT{
 		flags:            flags,
+		closeConDB:       funcCloseDB,
 		storageMetrics:   storageMetrics,
 		storageLongShort: storageLongShort,
 	}, nil
@@ -200,7 +223,9 @@ func periodSaveMetrics(params *paramsURLT, txErr chan error) {
 // Параметры:
 //
 // data - набор данных для обеспечения работы функции.
-func signalsStopRun(data checkReasonStopT) error {
+func signalsStopRun(data checkReasonStopT, params *paramsURLT) error {
+
+	defer params.closeConDB()
 
 	// Проверка на nil для полей структуры
 	if data.sigSys == nil {
@@ -277,7 +302,7 @@ func actions(params *paramsURLT, cr *chi.Mux) error {
 		params:       params,
 	}
 
-	err := signalsStopRun(data)
+	err := signalsStopRun(data, params)
 	if err != nil {
 		return fmt.Errorf("функция signalsStopRun вернула ошибку: <%w>", err)
 	}
@@ -306,7 +331,7 @@ func handlersShortener(cr *chi.Mux, p *paramsURLT) error {
 	cr.Get("/ping", handler.Middleware(http.HandlerFunc(p.storageLongShort.PingDB)))
 	cr.Post("/api/shorten/batch", handler.Middleware(http.HandlerFunc(p.storageLongShort.ShortURLFromLongBatch)))
 
-	cr.Get("/api/user/urls", handler.Middleware(http.HandlerFunc(p.storageLongShort.UserURLs))) //req.Get("/api/user/urls")
+	cr.Get("/api/user/urls", handler.Middleware(http.HandlerFunc(p.storageLongShort.UserURLs)))
 
 	return nil
 }
