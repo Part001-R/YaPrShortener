@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/Part001-R/YaPrShortener/internal/config/config"
+	"github.com/Part001-R/YaPrShortener/internal/service/logger"
+	"go.uber.org/zap"
 )
 
 type MetricsT struct {
@@ -26,7 +28,7 @@ type MetricsT struct {
 }
 
 type MetricsDBT struct {
-	DSN string
+	ptr *sql.DB
 	Mu  sync.RWMutex
 }
 
@@ -89,9 +91,9 @@ func NewMetricsStorage(m *MetricsT, db *MetricsDBT, f config.ConfigT) MetricsI {
 	}
 }
 
-func NewMetricsDB(dsn string) *MetricsDBT {
+func NewMetricsDB(db *sql.DB) *MetricsDBT {
 	return &MetricsDBT{
-		DSN: dsn,
+		ptr: db,
 		Mu:  sync.RWMutex{},
 	}
 }
@@ -109,23 +111,7 @@ func (m *MetricsHandlerT) UpdateMetricByTypeAndName(w http.ResponseWriter, r *ht
 	m.Metrics.Mu.RLock()
 	defer m.Metrics.Mu.RUnlock()
 
-	// Подключение к БД
-	var db *sql.DB
-	var err error
-
-	if m.DB.DSN != "" {
-
-		db, err = sql.Open("postgres", m.DB.DSN)
-		if err != nil {
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
-		defer func() {
-			_ = db.Close()
-		}()
-	}
-
-	internalUpdateMetricByTypeAndName(db, m, w, r)
+	internalUpdateMetricByTypeAndName(m.DB.ptr, m, w, r)
 }
 
 func (m *MetricsHandlerT) UpdateMetricByTypeAndNameBatch(w http.ResponseWriter, r *http.Request) {
@@ -143,9 +129,19 @@ func (m *MetricsHandlerT) UpdateMetricByTypeAndNameBatch(w http.ResponseWriter, 
 	// Чтение тела запроса
 	rxData, err := io.ReadAll(r.Body)
 	defer func() {
-		_ = r.Body.Close()
+		err = r.Body.Close()
+		logger.Log.Error("Ошибка при закрытии r.Body",
+			zap.Error(err),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
 	}()
 	if err != nil {
+		logger.Log.Error("Ошибка при чтении тела запроса",
+			zap.Error(err),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -164,24 +160,16 @@ func (m *MetricsHandlerT) UpdateMetricByTypeAndNameBatch(w http.ResponseWriter, 
 	}
 
 	// Обработка
-	if m.DB.DSN != "" { // сохранение пары соответствия в БД
+	if m.DB.ptr != nil { // сохранение пары соответствия в БД
 
-		db, err := sql.Open("postgres", m.DB.DSN)
-		if err != nil {
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
-		defer func() {
-			_ = db.Close()
-		}()
-
-		err = allActionsStorageBatchDBMetricsTx(db, rxMetricsBatch)
+		err = allActionsStorageBatchDBMetricsTx(m.DB.ptr, rxMetricsBatch)
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return
 		}
+	}
 
-	} else { // сохранение пары соответствия в мапы и файл
+	if m.DB.ptr == nil { // сохранение пары соответствия в мапы и файл
 
 		// Сохранение в мапы
 		err := storageMetricsInMap(rxMetricsBatch, m.Metrics.GaugeMetrics, m.Metrics.CounterMetrics)
@@ -194,6 +182,11 @@ func (m *MetricsHandlerT) UpdateMetricByTypeAndNameBatch(w http.ResponseWriter, 
 		if m.StoreIntervalMetr == "0" {
 			err := storage(m.FileStoragePathMetr, m.Metrics.GaugeMetrics, m.Metrics.CounterMetrics)
 			if err != nil {
+				logger.Log.Error("Ошибка при синхронном сохранении в файл",
+					zap.Error(err),
+					zap.String("method", r.Method),
+					zap.String("url", r.URL.String()),
+				)
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
@@ -257,6 +250,11 @@ func (m *MetricsHandlerT) MetricByJSON(w http.ResponseWriter, r *http.Request) {
 
 	txData, err := json.Marshal(rawData)
 	if err != nil {
+		logger.Log.Error("Ошибка сериализации данных",
+			zap.Error(err),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -408,7 +406,12 @@ func storage(filePath string, gM map[string]float64, cM map[string]int64) error 
 		return fmt.Errorf("ошибка <%v> открытия файла <%s>", err, filePath)
 	}
 	defer func() {
-		_ = file.Close()
+		if err := file.Close(); err != nil {
+			logger.Log.Error("Ошибка закрытия подключения к файлу",
+				zap.Error(err),
+			)
+		}
+
 	}()
 
 	if len(gM) == 0 && len(cM) == 0 {
@@ -727,40 +730,71 @@ func internalUpdateMetricByTypeAndName(db *sql.DB, m *MetricsHandlerT, w http.Re
 	}
 
 	// Обработка сохранения
-	if m.DB.DSN != "" { // сохранение в БД
+	if db != nil { // сохранение в БД
 
 		// Сохранение
 		switch typeMetric {
 		case "counter":
 			value, ok := m.Metrics.CounterMetrics[nameMetric]
 			if !ok {
+				logger.Log.Error("Ошибка, нет признака существования ключа",
+					zap.String("key", nameMetric),
+					zap.String("method", r.Method),
+					zap.String("url", r.URL.String()),
+				)
+
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
-			if m.DB.DSN != "" {
-				err := storageDBCounterMetrics(db, nameMetric, value)
-				if err != nil {
-					http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-					return
-				}
+
+			err := storageDBCounterMetrics(db, nameMetric, value)
+			if err != nil {
+				logger.Log.Error("Ошибка при сохранении метрики в БД",
+					zap.Error(err),
+					zap.String("metric", nameMetric),
+					zap.String("value", fmt.Sprintf("%d", value)),
+					zap.String("method", r.Method),
+					zap.String("url", r.URL.String()),
+				)
+
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
 			}
 
 		case "gauge":
 			value, ok := m.Metrics.GaugeMetrics[nameMetric]
 			if !ok {
+				logger.Log.Error("Ошибка, нет признака существования ключа",
+					zap.String("key", nameMetric),
+					zap.String("method", r.Method),
+					zap.String("url", r.URL.String()),
+				)
+
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
-			if m.DB.DSN != "" {
-				err := storageDBGaugeMetrics(db, nameMetric, value)
-				if err != nil {
-					http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-					return
-				}
+
+			err := storageDBGaugeMetrics(db, nameMetric, value)
+			if err != nil {
+				logger.Log.Error("Ошибка при сохранении метрики в БД",
+					zap.Error(err),
+					zap.String("metric", nameMetric),
+					zap.String("value", fmt.Sprintf("%f", value)),
+					zap.String("method", r.Method),
+					zap.String("url", r.URL.String()),
+				)
+
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
 			}
+		default:
+			http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+			return
 
 		}
-	} else { // Синхронное сохранение в файл и сохранение в мапы
+	}
+
+	if db == nil { // Синхронное сохранение в файл и сохранение в мапы
 
 		// Сохранение в мапы
 		switch typeMetric {
@@ -789,6 +823,11 @@ func internalUpdateMetricByTypeAndName(db *sql.DB, m *MetricsHandlerT, w http.Re
 		if m.StoreIntervalMetr == "0" {
 			err := storage(m.FileStoragePathMetr, m.Metrics.GaugeMetrics, m.Metrics.CounterMetrics)
 			if err != nil {
+				logger.Log.Error("Ошибка при синхронном сохранении в файл",
+					zap.Error(err),
+					zap.String("method", r.Method),
+					zap.String("url", r.URL.String()),
+				)
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}

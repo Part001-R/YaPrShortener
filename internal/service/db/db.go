@@ -7,11 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Part001-R/YaPrShortener/internal/config/config"
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/Part001-R/YaPrShortener/internal/service/logger"
 	_ "github.com/lib/pq"
+	"github.com/pressly/goose"
+	"go.uber.org/zap"
 )
 
 // Функция реализует миграцию Up БД. Возвращает ошибку.
@@ -19,60 +18,39 @@ import (
 // Параметры:
 //
 // config - конфигурация.
-func MigrationUpDB(config config.ConfigT) error {
+func MigrationUpDB(db *sql.DB) error {
 
-	if config.DSNDB == "" {
-		return nil
-	}
-
-	db, err := sql.Open("postgres", config.DSNDB)
-	if err != nil {
-		return fmt.Errorf("ошибка подключения к БД: <%w>", err)
-	}
-	defer db.Close()
-
-	// Создание миграций
-	driver, err := postgres.WithInstance(db, &postgres.Config{})
-	if err != nil {
-		return fmt.Errorf("ошибка создания миграций: <%w>", err)
-	}
-
+	// Определение рабочей директории
 	path, err := workDir()
 	if err != nil {
-		return fmt.Errorf("ошибка в распозновании пути проекта: <%w>", err)
+		return fmt.Errorf("ошибка при определении рабочей дирекории: <%w>", err)
 	}
 
-	// Определение места выполнения и формирование пути в migrations файлам
+	// Определение пути к файлам миграции
 	var pathFilesMigration string
 
 	switch path {
 	case "YaPrShortener/internal/service/db":
-		pathFilesMigration = "file://../../migrations"
+		pathFilesMigration = "../../../migrations"
 	case "YaPrShortener/cmd/shortener":
-		pathFilesMigration = "file://../migrations"
+		pathFilesMigration = "../../migrations"
 	case "YaPrShortener":
-		pathFilesMigration = "file://migrations"
+		pathFilesMigration = "migrations"
 	case "YaPrShortener/YaPrShortener": // для тестов в github
-		pathFilesMigration = "file://migrations"
+		pathFilesMigration = "migrations"
 	default:
 		return errors.New("не найдено совпадение пути в switch")
 	}
 
-	m, err := migrate.NewWithDatabaseInstance(
-		pathFilesMigration,
-		"postgres", driver)
+	// Применение миграций
+	err = goose.Up(db, pathFilesMigration)
 	if err != nil {
-		return fmt.Errorf("ошибка работы с файлами: <%w>", err)
+		logger.Log.Error("Ошибка применения миграции БД",
+			zap.Error(err),
+		)
+		return fmt.Errorf("ошибка мри миграции БД")
 	}
 
-	// Применение миграций
-	if err := m.Up(); err != nil {
-		if err.Error() == "no change" {
-			return nil
-		} else {
-			return fmt.Errorf("ошибка выполнения миграции: <%w>", err)
-		}
-	}
 	return nil
 }
 
@@ -103,4 +81,33 @@ func workDir() (string, error) {
 	path := strings.Join(pathFull[startIndex:], "/")
 
 	return path, nil
+}
+
+// Функция реализует подключение к БД. Возвращает указатель на БД, функцию отключения и ошибку.
+//
+// Параметры:
+//
+// dsn - строка подключения к БД.
+func ConnectDB(dsn string) (*sql.DB, func(), error) {
+
+	if dsn == "" {
+		return nil, nil, fmt.Errorf("в аргументе dsn нет содержмиого")
+	}
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		logger.Log.Error("Ошибка при подключении к БД",
+			zap.Error(err),
+		)
+	}
+
+	closeDB := func() {
+		if err := db.Close(); err != nil {
+			logger.Log.Error("Ошибка при закрытии подключения к БД",
+				zap.Error(err),
+			)
+		}
+	}
+
+	return db, closeDB, nil
 }

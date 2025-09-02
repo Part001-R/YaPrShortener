@@ -27,10 +27,7 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 			LongByShort: make(map[string]string),
 			Mu:          sync.RWMutex{},
 		},
-		DB: &ShortLongDBT{
-			DSN: "host=localhost port=1 user=AAA password=BBB dbname=CCC sslmode=disable",
-			Mu:  sync.RWMutex{},
-		},
+		DB:               &ShortLongDBT{},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -41,7 +38,7 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 		urlT           string
 		methodReqT     string
 		longURLT       string
-		useDSNT        bool
+		useDBT         bool
 		initMockT      func(mock sqlmock.Sqlmock)
 		contentTypeT   string
 		wantStatusCode int
@@ -51,7 +48,7 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 			urlT:       "http://localhost:8080",
 			methodReqT: http.MethodPost,
 			longURLT:   "https://practicum.yandex.ru/",
-			useDSNT:    true,
+			useDBT:     true,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
@@ -65,7 +62,7 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 			urlT:       "http://localhost:8080",
 			methodReqT: http.MethodPost,
 			longURLT:   "https://practicum.yandex.ru/",
-			useDSNT:    false,
+			useDBT:     false,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
@@ -90,8 +87,8 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 			req := httptest.NewRequest(tt.methodReqT, tt.urlT, bodyReq)
 			res := httptest.NewRecorder()
 
-			if !tt.useDSNT {
-				conf.DB.DSN = ""
+			if !tt.useDBT {
+				db = nil
 			}
 
 			req.Header.Set("Content-Type", tt.contentTypeT)
@@ -106,7 +103,7 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 
 			require.Equalf(t, tt.wantStatusCode, resp.StatusCode, "ожидался код {%d}, а принят {%d}", tt.wantStatusCode, resp.StatusCode)
 
-			if !tt.useDSNT { // Проверка работы с мапами и файлом
+			if !tt.useDBT { // Проверка работы с мапами и файлом
 				// Мапы
 				shortURL, ok := conf.List.ShorByLong[tt.longURLT]
 				assert.Equalf(t, true, ok, "нет признака существования ключа <%s> в мапе sByL", tt.longURLT)
@@ -156,10 +153,6 @@ func Test_internalShortURLFromLong_FAULT(t *testing.T) {
 			LongByShort: make(map[string]string),
 			Mu:          sync.RWMutex{},
 		},
-		DB: &ShortLongDBT{
-			DSN: "host=localhost port=1 user=AAA password=BBB dbname=CCC sslmode=disable",
-			Mu:  sync.RWMutex{},
-		},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -171,26 +164,10 @@ func Test_internalShortURLFromLong_FAULT(t *testing.T) {
 		methodReqT     string
 		bodyT          string
 		initMockT      func(mock sqlmock.Sqlmock)
-		useDBT         bool
 		useConfT       bool
 		contentTypeT   string
 		wantStatusCode int
 	}{
-		{
-			nameT:      "Неподдерживаемый метод",
-			urlT:       "http://localhost:8080/",
-			methodReqT: http.MethodGet,
-			bodyT:      "https://practicum.yandex.ru/",
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-			useDBT:         true,
-			useConfT:       true,
-			contentTypeT:   "application/json",
-			wantStatusCode: http.StatusBadRequest,
-		},
 		{
 			nameT:      "пустое тело",
 			urlT:       "http://localhost:8080/",
@@ -201,25 +178,9 @@ func Test_internalShortURLFromLong_FAULT(t *testing.T) {
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
-			useDBT:         true,
 			useConfT:       true,
 			contentTypeT:   "application/json",
 			wantStatusCode: http.StatusBadRequest,
-		},
-		{
-			nameT:      "Нет указателя на БД",
-			urlT:       "http://localhost:8080/",
-			methodReqT: http.MethodPost,
-			bodyT:      "https://practicum.yandex.ru/",
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-			useDBT:         false,
-			useConfT:       true,
-			contentTypeT:   "application/json",
-			wantStatusCode: http.StatusInternalServerError,
 		},
 		{
 			nameT:      "Нет указателя на конфигурацию",
@@ -231,7 +192,6 @@ func Test_internalShortURLFromLong_FAULT(t *testing.T) {
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
-			useDBT:         true,
 			useConfT:       false,
 			contentTypeT:   "application/json",
 			wantStatusCode: http.StatusInternalServerError,
@@ -252,9 +212,6 @@ func Test_internalShortURLFromLong_FAULT(t *testing.T) {
 			req := httptest.NewRequest(tt.methodReqT, tt.urlT, bodyReq)
 			res := httptest.NewRecorder()
 
-			if !tt.useDBT {
-				db = nil
-			}
 			if !tt.useConfT {
 				conf = nil
 			}
@@ -280,10 +237,7 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 			LongByShort: make(map[string]string),
 			Mu:          sync.RWMutex{},
 		},
-		DB: &ShortLongDBT{
-			DSN: "host=localhost port=1 user=AAA password=BBB dbname=CCC sslmode=disable",
-			Mu:  sync.RWMutex{},
-		},
+		DB:               &ShortLongDBT{},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -295,7 +249,7 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 		methodReqT     string
 		contentTypeT   string
 		longURLT       rxLongURLT
-		useDSNT        bool
+		useDBT         bool
 		initMockT      func(mock sqlmock.Sqlmock)
 		wantStatusCode int
 	}{
@@ -306,7 +260,7 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 			methodReqT:   http.MethodPost,
 			contentTypeT: `application/json`,
 			longURLT:     rxLongURLT{URL: "https://practicum.yandex.ru"},
-			useDSNT:      true,
+			useDBT:       true,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
 					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg()).
@@ -320,7 +274,7 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 			methodReqT:   http.MethodPost,
 			contentTypeT: `application/json`,
 			longURLT:     rxLongURLT{URL: "https://practicum.yandex.ru"},
-			useDSNT:      false,
+			useDBT:       false,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
 					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg()).
@@ -349,8 +303,8 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 
 			req.Header.Set("Content-Type", tt.contentTypeT)
 
-			if !tt.useDSNT {
-				conf.DB.DSN = ""
+			if !tt.useDBT {
+				db = nil
 			}
 
 			internalShortURLFromLongJSON(db, conf, res, req)
@@ -363,7 +317,7 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 
 			require.Equalf(t, tt.wantStatusCode, resp.StatusCode, "ожидался код <%d>, а принят <%d>", tt.wantStatusCode, resp.StatusCode)
 
-			if !tt.useDSNT { // Проверка работы с мапами и файлом
+			if !tt.useDBT { // Проверка работы с мапами и файлом
 				// Мапы
 				shortURL, ok := conf.List.ShorByLong[tt.longURLT.URL]
 				assert.Equalf(t, true, ok, "нет признака существования ключа <%s> в мапе sByL", tt.longURLT)
@@ -413,10 +367,7 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 			LongByShort: make(map[string]string),
 			Mu:          sync.RWMutex{},
 		},
-		DB: &ShortLongDBT{
-			DSN: "host=localhost port=1 user=AAA password=BBB dbname=CCC sslmode=disable",
-			Mu:  sync.RWMutex{},
-		},
+		DB:               &ShortLongDBT{},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -428,26 +379,10 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 		methodReqT     string
 		longURLT       rxLongURLT
 		initMockT      func(mock sqlmock.Sqlmock)
-		useDBT         bool
 		useConfT       bool
 		contentTypeT   string
 		wantStatusCode int
 	}{
-		{
-			nameT:      "Неподдерживаемый метод",
-			urlT:       "http://localhost:8080/",
-			methodReqT: http.MethodGet,
-			longURLT:   rxLongURLT{URL: "https://practicum.yandex.ru"},
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-			useDBT:         true,
-			useConfT:       true,
-			contentTypeT:   "application/json",
-			wantStatusCode: http.StatusBadRequest,
-		},
 		{
 			nameT:      "пустое тело",
 			urlT:       "http://localhost:8080/",
@@ -458,25 +393,9 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
-			useDBT:         true,
 			useConfT:       true,
 			contentTypeT:   "application/json",
 			wantStatusCode: http.StatusBadRequest,
-		},
-		{
-			nameT:      "Нет указателя на БД",
-			urlT:       "http://localhost:8080/",
-			methodReqT: http.MethodPost,
-			longURLT:   rxLongURLT{URL: "https://practicum.yandex.ru"},
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg()).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-			useDBT:         false,
-			useConfT:       true,
-			contentTypeT:   "application/json",
-			wantStatusCode: http.StatusInternalServerError,
 		},
 		{
 			nameT:      "Неподдерживаемый тип контента",
@@ -488,7 +407,6 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
-			useDBT:         true,
 			useConfT:       true,
 			contentTypeT:   "AAA",
 			wantStatusCode: http.StatusBadRequest,
@@ -503,7 +421,6 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
-			useDBT:         true,
 			useConfT:       false,
 			contentTypeT:   "application/json",
 			wantStatusCode: http.StatusInternalServerError,
@@ -529,9 +446,6 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 
 			req.Header.Set("Content-Type", tt.contentTypeT)
 
-			if !tt.useDBT {
-				db = nil
-			}
 			if !tt.useConfT {
 				conf = nil
 			}
@@ -557,10 +471,7 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 			LongByShort: make(map[string]string),
 			Mu:          sync.RWMutex{},
 		},
-		DB: &ShortLongDBT{
-			DSN: "host=localhost port=1 user=AAA password=BBB dbname=CCC sslmode=disable",
-			Mu:  sync.RWMutex{},
-		},
+		DB:               &ShortLongDBT{},
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -580,7 +491,7 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 		urlT           string
 		methodReqT     string
 		longURLT       string
-		useDSNT        bool
+		useDBT         bool
 		initMockT      func(mock sqlmock.Sqlmock)
 		wantStatusCode int
 	}{
@@ -589,7 +500,7 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 			urlT:       conf.BaseAddrShortURL + code,
 			methodReqT: http.MethodGet,
 			longURLT:   "https://practicum.yandex.ru/",
-			useDSNT:    true,
+			useDBT:     true,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectQuery(`SELECT long FROM shortener`).
 					WithArgs(code).
@@ -603,7 +514,7 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 			urlT:       conf.BaseAddrShortURL + code,
 			methodReqT: http.MethodGet,
 			longURLT:   "https://practicum.yandex.ru/",
-			useDSNT:    false,
+			useDBT:     false,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("SELECT long").
 					WithArgs(code).
@@ -625,8 +536,8 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 			req := httptest.NewRequest(tt.methodReqT, tt.urlT, nil)
 			res := httptest.NewRecorder()
 
-			if !tt.useDSNT {
-				conf.DB.DSN = ""
+			if !tt.useDBT {
+				db = nil
 			}
 
 			internalLongURLFromShort(db, conf, res, req)
@@ -641,7 +552,7 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 
 			require.Equalf(t, tt.wantStatusCode, resp.StatusCode, "ожидался код {%d}, а принят {%d}", tt.wantStatusCode, resp.StatusCode)
 
-			if !tt.useDSNT { // Проверка работы с мапами и файлом
+			if !tt.useDBT { // Проверка работы с мапами и файлом
 
 				assert.Equalf(t, tt.longURLT, rxStr, "ожидался базовый URL <%s>, а принято <%s>", tt.longURLT, rxStr)
 
@@ -662,10 +573,6 @@ func Test_internalLongURLFromShort_FAULT(t *testing.T) {
 			ShorByLong:  make(map[string]string),
 			LongByShort: make(map[string]string),
 			Mu:          sync.RWMutex{},
-		},
-		DB: &ShortLongDBT{
-			DSN: "host=localhost port=1 user=AAA password=BBB dbname=CCC sslmode=disable",
-			Mu:  sync.RWMutex{},
 		},
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
@@ -1242,10 +1149,7 @@ func Test_workWithRxData_SUCCESS(t *testing.T) {
 			LongByShort: make(map[string]string),
 			Mu:          sync.RWMutex{},
 		},
-		DB: &ShortLongDBT{
-			DSN: "host=localhost port=1 user=AAA password=BBB dbname=CCC sslmode=disable",
-			Mu:  sync.RWMutex{},
-		},
+		DB:               &ShortLongDBT{},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -1255,13 +1159,13 @@ func Test_workWithRxData_SUCCESS(t *testing.T) {
 	testsData := []struct {
 		nameTest  string
 		longURLT  string
-		useDSNT   bool
+		useDB     bool
 		initMockT func(mock sqlmock.Sqlmock)
 	}{
 		{
 			nameTest: "сохранение в БД",
 			longURLT: "https://practicum.yandex.ru/",
-			useDSNT:  true,
+			useDB:    true,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
@@ -1271,7 +1175,7 @@ func Test_workWithRxData_SUCCESS(t *testing.T) {
 		{
 			nameTest: "сохранение в мапы и файл",
 			longURLT: "https://practicum.yandex.ru/",
-			useDSNT:  false,
+			useDB:    false,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
@@ -1290,14 +1194,14 @@ func Test_workWithRxData_SUCCESS(t *testing.T) {
 
 			tt.initMockT(mock)
 
-			if !tt.useDSNT {
-				conf.DB.DSN = ""
+			if !tt.useDB {
+				db = nil
 			}
 
 			shortURL, err := workWithRxData(db, conf, tt.longURLT)
 			require.NoErrorf(t, err, "неожиданная ошибка <%v>", err)
 
-			if !tt.useDSNT {
+			if !tt.useDB {
 				// Проверка отработки с мапами
 				value, ok := conf.List.LongByShort[shortURL]
 				assert.Equalf(t, true, ok, "нет признака существования ключа <%s> в мапе lByS", shortURL)
@@ -1343,10 +1247,7 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 			LongByShort: make(map[string]string),
 			Mu:          sync.RWMutex{},
 		},
-		DB: &ShortLongDBT{
-			DSN: "host=localhost port=1 user=AAA password=BBB dbname=CCC sslmode=disable",
-			Mu:  sync.RWMutex{},
-		},
+		DB:               &ShortLongDBT{},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -1355,27 +1256,13 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 	testsData := []struct {
 		nameTest    string
 		usePtrConfT bool
-		usePtrDBT   bool
 		longURLT    string
 		initMockT   func(mock sqlmock.Sqlmock)
 		wantErrorT  string
 	}{
 		{
-			nameTest:    "нет указателя на БД",
-			usePtrConfT: true,
-			usePtrDBT:   false,
-			longURLT:    "https://practicum.yandex.ru/",
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-			wantErrorT: "в принятом аргументе db, нет указателя",
-		},
-		{
 			nameTest:    "нет значения длинной ссылки",
 			usePtrConfT: true,
-			usePtrDBT:   true,
 			longURLT:    "",
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
@@ -1387,7 +1274,6 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 		{
 			nameTest:    "нет указателя на конфигурацию",
 			usePtrConfT: false,
-			usePtrDBT:   true,
 			longURLT:    "https://practicum.yandex.ru/",
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
@@ -1408,9 +1294,6 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 
 			if !tt.usePtrConfT {
 				conf = nil
-			}
-			if !tt.usePtrDBT {
-				db = nil
 			}
 
 			_, err = workWithRxData(db, conf, tt.longURLT)
@@ -1532,10 +1415,7 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 			LongByShort: make(map[string]string),
 			Mu:          sync.RWMutex{},
 		},
-		DB: &ShortLongDBT{
-			DSN: "host=localhost port=1 user=AAA password=BBB dbname=CCC sslmode=disable",
-			Mu:  sync.RWMutex{},
-		},
+		DB:               &ShortLongDBT{},
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -1548,7 +1428,7 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 		methodReqT     string
 		batchLongURLT  []rxLongURLBatchT
 		initMockT      func(mock sqlmock.Sqlmock)
-		useDSN         bool
+		useDB          bool
 		wantStatusCode int
 	}{
 		{
@@ -1578,7 +1458,7 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 
 				mock.ExpectCommit()
 			},
-			useDSN:         true,
+			useDB:          true,
 			wantStatusCode: http.StatusCreated,
 		},
 		{
@@ -1608,7 +1488,7 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 
 				mock.ExpectCommit()
 			},
-			useDSN:         false,
+			useDB:          false,
 			wantStatusCode: http.StatusCreated,
 		},
 	}
@@ -1633,8 +1513,8 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 
 			req.Header.Set("Content-Type", "application/json")
 
-			if !tt.useDSN {
-				conf.DB.DSN = ""
+			if !tt.useDB {
+				db = nil
 			}
 
 			internalShortURLFromLongBatch(db, conf, res, req)
@@ -1663,7 +1543,7 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 			assert.NotEqualf(t, 0, len(batchShortURL[1].ShortURL), "нет содержимого сокращения в ответе у id <%d>", 1)
 
 			// Проверка, что все mock выполнены
-			if tt.useDSN {
+			if tt.useDB {
 				err = mock.ExpectationsWereMet()
 				require.NoError(t, err, "не все ожидания были выполнены")
 			}
@@ -1679,10 +1559,6 @@ func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 			LongByShort: make(map[string]string),
 			Mu:          sync.RWMutex{},
 		},
-		DB: &ShortLongDBT{
-			DSN: "host=localhost port=1 user=AAA password=BBB dbname=CCC sslmode=disable",
-			Mu:  sync.RWMutex{},
-		},
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -1694,7 +1570,6 @@ func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 		methodReqT     string
 		bodyT          string
 		initMockT      func(mock sqlmock.Sqlmock)
-		useDBT         bool
 		useConfT       bool
 		contentTypeT   string
 		wantStatusCode int
@@ -1709,7 +1584,6 @@ func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
-			useDBT:         true,
 			useConfT:       true,
 			contentTypeT:   "application/json",
 			wantStatusCode: http.StatusBadRequest,
@@ -1724,25 +1598,9 @@ func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
-			useDBT:         true,
 			useConfT:       true,
 			contentTypeT:   "application/json",
 			wantStatusCode: http.StatusBadRequest,
-		},
-		{
-			nameT:      "Нет указателя на БД",
-			urlT:       "http://localhost:8080/",
-			methodReqT: http.MethodPost,
-			bodyT:      "https://practicum.yandex.ru/",
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-			useDBT:         false,
-			useConfT:       true,
-			contentTypeT:   "application/json",
-			wantStatusCode: http.StatusInternalServerError,
 		},
 		{
 			nameT:      "Нет указателя на конфигурацию",
@@ -1754,7 +1612,6 @@ func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
-			useDBT:         true,
 			useConfT:       false,
 			contentTypeT:   "application/json",
 			wantStatusCode: http.StatusInternalServerError,
@@ -1775,9 +1632,6 @@ func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 			req := httptest.NewRequest(tt.methodReqT, tt.urlT, bodyReq)
 			res := httptest.NewRecorder()
 
-			if !tt.useDBT {
-				db = nil
-			}
 			if !tt.useConfT {
 				conf = nil
 			}
@@ -1806,10 +1660,7 @@ func Test_UpdateMetricByTypeAndName_SUCCESS(t *testing.T) {
 			CounterMetrics: make(map[string]int64),
 			Mu:             sync.RWMutex{},
 		},
-		DB: &MetricsDBT{
-			DSN: "",
-			Mu:  sync.RWMutex{},
-		},
+		DB:                  &MetricsDBT{},
 		StoreIntervalMetr:   "300",
 		FileStoragePathMetr: "storageMetrics.json",
 		RestoreMetr:         "false",
@@ -1825,19 +1676,9 @@ func Test_UpdateMetricByTypeAndName_SUCCESS(t *testing.T) {
 		initMockT      func(mock sqlmock.Sqlmock)
 		wantStatusCode int
 	}{
+
 		{
-			nameT:   "корректные данные 1",
-			methodT: http.MethodPost,
-			urlT:    "http://localhost:8080/update/gauge/LastGC/1257894000000000000",
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-			wantStatusCode: http.StatusOK,
-		},
-		{
-			nameT:   "корректные данные 2",
+			nameT:   "Корректные данные",
 			methodT: http.MethodPost,
 			urlT:    "http://localhost:8080/update/counter/NumGC/42",
 			initMockT: func(mock sqlmock.Sqlmock) {
@@ -1862,6 +1703,7 @@ func Test_UpdateMetricByTypeAndName_SUCCESS(t *testing.T) {
 			req := httptest.NewRequest(tt.methodT, tt.urlT, nil)
 			res := httptest.NewRecorder()
 
+			db = nil
 			internalUpdateMetricByTypeAndName(db, conf, res, req)
 
 			resp := res.Result()
@@ -1883,10 +1725,6 @@ func Test_UpdateMetricByTypeAndName_FAULT(t *testing.T) {
 			GaugeMetrics:   make(map[string]float64),
 			CounterMetrics: make(map[string]int64),
 			Mu:             sync.RWMutex{},
-		},
-		DB: &MetricsDBT{
-			DSN: "",
-			Mu:  sync.RWMutex{},
 		},
 		StoreIntervalMetr:   "300",
 		FileStoragePathMetr: "storageMetrics.json",
@@ -1968,10 +1806,6 @@ func Test_ValueMetricByTypeAndName_SUCCESS(t *testing.T) {
 			CounterMetrics: make(map[string]int64),
 			Mu:             sync.RWMutex{},
 		},
-		DB: &MetricsDBT{
-			DSN: "",
-			Mu:  sync.RWMutex{},
-		},
 		StoreIntervalMetr:   "300",
 		FileStoragePathMetr: "storageMetrics.json",
 		RestoreMetr:         "false",
@@ -2023,10 +1857,6 @@ func Test_ValueMetricByTypeAndName_FAULT(t *testing.T) {
 			GaugeMetrics:   make(map[string]float64),
 			CounterMetrics: make(map[string]int64),
 			Mu:             sync.RWMutex{},
-		},
-		DB: &MetricsDBT{
-			DSN: "",
-			Mu:  sync.RWMutex{},
 		},
 		StoreIntervalMetr:   "300",
 		FileStoragePathMetr: "storageMetrics.json",
