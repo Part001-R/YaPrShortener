@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Part001-R/YaPrShortener/internal/config/config"
+	"github.com/Part001-R/YaPrShortener/internal/service/authorisation"
 	gz "github.com/Part001-R/YaPrShortener/internal/service/gzip"
 	"github.com/Part001-R/YaPrShortener/internal/service/logger"
 	_ "github.com/lib/pq"
@@ -321,16 +322,6 @@ func Middleware(h http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 		}
-		/*
-			// Проверка куки
-			cookie, err := r.Cookie("user_id")
-			if err != nil || cookie.Value == "" {
-
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
-			userID := cookie.Value
-		*/
 
 		// Запуск обработчика
 		timeStart := time.Now()
@@ -1530,6 +1521,12 @@ func deleteAllByShortDB(db *sql.DB, shortURLs []string) error {
 // r - *http.Request.
 func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http.Request) {
 
+	http.SetCookie(w, &http.Cookie{
+		Name:  "auth",
+		Value: "your_auth_value", // Замените на ваше значение
+		Path:  "/",
+	})
+
 	// Проверка аргументов
 	if r == nil {
 		logger.Log.Error("В аргументе r нет указателя")
@@ -1579,6 +1576,11 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 		}
 
 		if len(shortLong) == 0 {
+
+			// Установка куки
+			uuid := authorisation.GenerateUniqueID() // ?
+			authorisation.SetUserCookie(w, uuid)
+
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -1603,6 +1605,11 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 		}
 
 		if len(shortLong) == 0 {
+
+			// Установка куки
+			uuid := authorisation.GenerateUniqueID() // ?
+			authorisation.SetUserCookie(w, uuid)
+
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -1701,7 +1708,7 @@ func ClearShortenerTable(db *sql.DB) error {
 // Параметры:
 //
 // str - строка, для записи в файл.
-/*
+
 func WriteInFileDebugData(str string) {
 	filename := "debug.txt"
 
@@ -1717,4 +1724,3 @@ func WriteInFileDebugData(str string) {
 		log.Fatalf("ошибка <%v> записи в файл <%s>", err, filename)
 	}
 }
-*/
