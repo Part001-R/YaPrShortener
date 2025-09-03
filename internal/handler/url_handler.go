@@ -1557,9 +1557,12 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 	txData := make([]byte, 0)
 	_ = txData
 
+	el := txShortURLOriginalURLT{}
+	shortLong := make([]txShortURLOriginalURLT, 0)
+
 	if db != nil { //БД
 
-		shortLong, err := GetAllShortenerDB(db)
+		shortLongDB, err := GetAllShortenerDB(db)
 		if err != nil {
 			logger.Log.Error("Ошибка в функции GetAllShortenerDB",
 				zap.Error(err),
@@ -1570,29 +1573,20 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 			return
 		}
 
-		if len(shortLong) != 0 {
-			txData, err = json.Marshal(shortLong)
-			if err != nil {
-				logger.Log.Error("Ошибка сериализации БД",
-					zap.Error(err),
-					zap.String("method", r.Method),
-					zap.String("url", r.URL.String()),
-				)
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-				return
-			}
-		} else {
+		for k, v := range shortLongDB {
+			el.ShortURL = sl.BaseAddrShortURL + k
+			el.OriginalURL = v
+
+			shortLong = append(shortLong, el)
+		}
+
+		if len(shortLong) == 0 {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-
-		w.WriteHeader(http.StatusOK)
 	}
 
 	if db == nil { // Мапы
-
-		el := txShortURLOriginalURLT{}
-		shortLong := make([]txShortURLOriginalURLT, 0)
 
 		for k, v := range sl.List.LongByShort {
 			el.ShortURL = sl.BaseAddrShortURL + k
@@ -1601,30 +1595,30 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 			shortLong = append(shortLong, el)
 		}
 
-		if len(shortLong) != 0 {
-			sl.List.LongByShort = make(map[string]string) // очистка
-		} else {
+		if len(shortLong) == 0 {
 			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		var err error
-
-		txData, err = json.Marshal(shortLong)
-		if err != nil {
-			logger.Log.Error("Ошибка сериализации мапы",
-				zap.Error(err),
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
-
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 	}
 
-	w.Write(txData)
+	// Подготовка ответа
+	var err error
 
+	txData, err = json.Marshal(shortLong)
+	if err != nil {
+		logger.Log.Error("Ошибка сериализации ответа",
+			zap.Error(err),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Ответ
+	w.WriteHeader(http.StatusOK)
+	w.Write(txData)
 }
 
 func GetAllShortenerDB(db *sql.DB) (map[string]string, error) {
