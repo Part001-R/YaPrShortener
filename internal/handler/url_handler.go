@@ -1554,8 +1554,6 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	txData := make([]byte, 0)
-	_ = txData
 
 	el := txShortURLOriginalURLT{}
 	shortLong := make([]txShortURLOriginalURLT, 0)
@@ -1584,6 +1582,15 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+
+		if err := ClearShortenerTable(db); err != nil { // очистка таблицы
+			logger.Log.Error("Ошибка в функции ClearShortenerTable",
+				zap.Error(err),
+			)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+
 	}
 
 	if db == nil { // Мапы
@@ -1599,12 +1606,12 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+
+		sl.List.LongByShort = make(map[string]string) // очистка мапы
 	}
 
 	// Подготовка ответа
-	var err error
-
-	txData, err = json.Marshal(shortLong)
+	txData, err := json.Marshal(shortLong)
 	if err != nil {
 		logger.Log.Error("Ошибка сериализации ответа",
 			zap.Error(err),
@@ -1621,6 +1628,11 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 	w.Write(txData)
 }
 
+// Функция выполняет чтение содержимого таблицы сокращения ссылок. Возвращает мапу, где ключ - короткое представление, значение - URL, и ошибку.
+//
+// Параметры:
+//
+// db - указатель на БД.
 func GetAllShortenerDB(db *sql.DB) (map[string]string, error) {
 
 	shortToLongMap := make(map[string]string)
@@ -1660,6 +1672,28 @@ func GetAllShortenerDB(db *sql.DB) (map[string]string, error) {
 	}
 
 	return shortToLongMap, nil
+}
+
+// Функция выполняет очистку содержимого таблицы сокращения ссылок. Возвращает ошибку.
+//
+// Параметры:
+//
+// db - указатель на БД.
+func ClearShortenerTable(db *sql.DB) error {
+
+	if db == nil {
+		return errors.New("нет указателя в аргументе db")
+	}
+
+	query := `TRUNCATE TABLE shortener RESTART IDENTITY;`
+
+	// Запрос
+	_, err := db.Exec(query)
+	if err != nil {
+		return fmt.Errorf("ошибка при очистке таблицы: <%w>", err)
+	}
+
+	return nil
 }
 
 // Вспомогательная функция для отладки работы приложения.
