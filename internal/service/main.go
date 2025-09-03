@@ -330,8 +330,9 @@ func handlersShortener(cr *chi.Mux, p *paramsURLT) error {
 	cr.Get("/{id}", handler.Middleware(http.HandlerFunc(p.storageLongShort.LongURLFromShort)))
 	cr.Get("/ping", handler.Middleware(http.HandlerFunc(p.storageLongShort.PingDB)))
 	cr.Post("/api/shorten/batch", handler.Middleware(http.HandlerFunc(p.storageLongShort.ShortURLFromLongBatch)))
-
 	cr.Get("/api/user/urls", handler.Middleware(http.HandlerFunc(p.storageLongShort.UserURLs)))
+
+	cr.Delete("/api/user/urls", handler.Middleware(http.HandlerFunc(p.storageLongShort.DeleteUserURLs)))
 
 	return nil
 }

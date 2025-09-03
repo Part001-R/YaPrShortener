@@ -1649,6 +1649,75 @@ func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 	}
 }
 
+func Test_InternalDeleteUserURLs_SUCCESS(t *testing.T) {
+
+	// Данные для тестов
+	testData := []struct {
+		nameT          string
+		urlT           string
+		methodReqT     string
+		shortT         []string
+		initMockT      func(mock sqlmock.Sqlmock)
+		useDB          bool
+		wantStatusCode int
+	}{
+		{
+			nameT:      "БД",
+			urlT:       "http://localhost:8080/api/user/urls",
+			methodReqT: http.MethodDelete,
+			shortT:     []string{"short1", "short2"},
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+
+				mock.ExpectExec("DELETE FROM").
+					WithArgs("short1").
+					WillReturnResult(sqlmock.NewResult(1, 1))
+
+				mock.ExpectExec("DELETE FROM").
+					WithArgs("short2").
+					WillReturnResult(sqlmock.NewResult(2, 1))
+
+				mock.ExpectCommit()
+			},
+			useDB:          true,
+			wantStatusCode: http.StatusAccepted,
+		},
+	}
+
+	// Тесты
+	for _, tt := range testData {
+		t.Run(tt.nameT, func(t *testing.T) {
+
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			body, err := json.Marshal(tt.shortT)
+			require.NoErrorf(t, err, "неожиданная ошибка при сериализации данных: <%v>", err)
+
+			req := httptest.NewRequest(tt.methodReqT, tt.urlT, bytes.NewBuffer(body))
+			res := httptest.NewRecorder()
+
+			if !tt.useDB {
+				db = nil
+			}
+
+			internalDeleteUserURLs(db, res, req)
+
+			resp := res.Result()
+			defer resp.Body.Close()
+
+			assert.Equalf(t, http.StatusAccepted, resp.StatusCode, "ожилася код <%d>, а принят <%d>", http.StatusAccepted, resp.StatusCode)
+
+			if tt.useDB {
+				err = mock.ExpectationsWereMet()
+				assert.NoErrorf(t, err, "неожиданная ошибка при проверке выполнения mock: <%v>", err)
+			}
+
+		})
+	}
+}
+
 // Метрики
 
 func Test_UpdateMetricByTypeAndName_SUCCESS(t *testing.T) {
