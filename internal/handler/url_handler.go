@@ -525,7 +525,7 @@ func storageDBURLOnConflict(db *sql.DB, longURL, shortURL string) error {
 // db - указатель на БД.
 // longURL - длинное представление исходного URL.
 // shortURL - значение сокращения URL.
-func storageDBURLSimple(db *sql.DB, longURL, shortURL string) error {
+func storageDBURLSimple(db *sql.DB, longURL, shortURL, uuid string) error {
 
 	// Проверка аргументов
 	if db == nil {
@@ -537,17 +537,20 @@ func storageDBURLSimple(db *sql.DB, longURL, shortURL string) error {
 	if shortURL == "" {
 		return errors.New("принято пустое значение shortURL аргумента")
 	}
+	if uuid == "" {
+		return errors.New("принято пустое значение uuid аргумента")
+	}
 
 	// Сохранение (обновление) пары соответствия в БД
 	q := `
-		INSERT INTO shortener (long, short) 
-		VALUES ($1, $2) 
+		INSERT INTO shortener (long, short, uuid) 
+		VALUES ($1, $2, $3) 
 		`
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err := db.ExecContext(ctx, q, longURL, shortURL)
+	_, err := db.ExecContext(ctx, q, longURL, shortURL, uuid)
 	if err != nil {
 		return err
 	}
@@ -601,7 +604,7 @@ func storageDBURLtx(tx *sql.Tx, longURL, shortURL string) error {
 //
 // db - указатель на БД.
 // longURL - длинное представление URL.
-func actionStorageDBURLSimple(db *sql.DB, longURL string) (string, error) {
+func actionStorageDBURLSimple(db *sql.DB, longURL, uuid string) (string, error) {
 
 	// Проверки акргументов
 	if db == nil {
@@ -609,6 +612,9 @@ func actionStorageDBURLSimple(db *sql.DB, longURL string) (string, error) {
 	}
 	if longURL == "" {
 		return "", errors.New("пустое значение в longURL")
+	}
+	if uuid == "" {
+		return "", errors.New("пустое значение в uuid")
 	}
 
 	// Генерация кода сокращения
@@ -618,7 +624,7 @@ func actionStorageDBURLSimple(db *sql.DB, longURL string) (string, error) {
 	}
 
 	// Сохранение в БД
-	err = storageDBURLSimple(db, longURL, shortURL)
+	err = storageDBURLSimple(db, longURL, shortURL, uuid)
 	if err != nil {
 		return "", err // ожидается появление ошибки по уникальности короткого представления
 	}
@@ -817,26 +823,26 @@ func prapareBatchResponse(lByS map[string]string, batchLongURL []rxLongURLBatchT
 }
 
 // Функция выполняет обработку принятого, исходного URL с сохранением в БД или в мапы и файл. В зависимости от настроек.
-// Возвращается короткое представление и ошибка.
+// Возвращается короткое представление, uuid и ошибку.
 //
 // Параметры:
 //
 // sl - конфигурация для работы сервиса сокращения.
 // rxLongURL - исходный URL.
-func workWithRxData(db *sql.DB, sl *ShortLongT, rxLongURL string) (string, error) {
+func workWithRxData(db *sql.DB, sl *ShortLongT, rxLongURL string) (short, uuid string, err error) {
 
 	// Проверка аргументов
 	if sl == nil {
-		return "", fmt.Errorf("в принятом аргументе sl, нет указателя")
+		return "", "", fmt.Errorf("в принятом аргументе sl, нет указателя")
 	}
 	if rxLongURL == "" {
-		return "", fmt.Errorf("в принятом аргументе rxLongURL, нет содержимого")
+		return "", "", fmt.Errorf("в принятом аргументе rxLongURL, нет содержимого")
 	}
 	if sl.List == nil {
-		return "", fmt.Errorf("в принятом аргументе sl, нет указателя на мапы")
+		return "", "", fmt.Errorf("в принятом аргументе sl, нет указателя на мапы")
 	}
 	if sl.DB == nil {
-		return "", fmt.Errorf("в принятом аргументе sl, нет указателя на DB")
+		return "", "", fmt.Errorf("в принятом аргументе sl, нет указателя на DB")
 	}
 
 	sl.DB.Mu.RLock()
@@ -844,14 +850,16 @@ func workWithRxData(db *sql.DB, sl *ShortLongT, rxLongURL string) (string, error
 
 	// Работа
 	var shortURL string
-	var err error
+	var uid string
 
 	if db != nil { // сохранение пары соответствия в БД
 
-		shortURL, err = actionStorageDBURLSimple(db, rxLongURL)
+		uid = authorisation.GenerateUniqueID()
+
+		shortURL, err = actionStorageDBURLSimple(db, rxLongURL, uid)
 		if err != nil {
 
-			return "", fmt.Errorf("ошибка записи в БД: <%w>", err)
+			return "", "", fmt.Errorf("ошибка записи в БД: <%w>", err)
 		}
 	}
 
@@ -859,16 +867,19 @@ func workWithRxData(db *sql.DB, sl *ShortLongT, rxLongURL string) (string, error
 
 		shortURL, err = fillListShortByLong(sl.List.ShorByLong, sl.List.LongByShort, rxLongURL)
 		if err != nil {
-			return "", fmt.Errorf("ошибка заполнения мап: <%w>", err)
+			return "", "", fmt.Errorf("ошибка заполнения мап: <%w>", err)
 		}
 
 		err = storageFileURL(sl.FileStoragePath, sl.List.ShorByLong)
 		if err != nil {
-			return "", fmt.Errorf("ошибка при сохранении в файл: <%w>", err)
+			return "", "", fmt.Errorf("ошибка при сохранении в файл: <%w>", err)
 		}
 	}
 
-	return shortURL, nil
+	// Возврат результата
+	short = shortURL
+	uuid = uid
+	return short, uuid, nil
 }
 
 // Функция содержит логику обработчика ShortURLFromLong.
@@ -938,7 +949,7 @@ func internalShortURLFromLong(db *sql.DB, sl *ShortLongT, w http.ResponseWriter,
 	// Формирование короткого представления и сохранение
 	errUniqueLong := `pq: duplicate key value violates unique constraint "idx_shortener_long"` // ошибка по уникальности значения длинного представления
 
-	shortURL, err := workWithRxData(db, sl, rxLongURL)
+	shortURL, uuid, err := workWithRxData(db, sl, rxLongURL)
 	if err != nil && errors.Unwrap(err).Error() == errUniqueLong {
 
 		shortURL, err = readShortByLongDB(db, rxLongURL)
@@ -975,6 +986,7 @@ func internalShortURLFromLong(db *sql.DB, sl *ShortLongT, w http.ResponseWriter,
 	// Ответ
 	strResult := sl.BaseAddrShortURL + shortURL
 
+	w.Header().Set("Authorization", uuid)
 	w.Header().Set("Location", strResult)
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte(strResult))
@@ -1141,7 +1153,7 @@ func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLongT, w http.ResponseWri
 	// формирование короткого представления и сохранение
 	errUniqueLong := `pq: duplicate key value violates unique constraint "idx_shortener_long"` // ошибка по уникальности значения длинного представления
 
-	shortURL, err := workWithRxData(db, sl, rxJSON.URL)
+	shortURL, uuid, err := workWithRxData(db, sl, rxJSON.URL)
 	if err != nil && errors.Unwrap(err).Error() == errUniqueLong {
 
 		shortURL, err = readShortByLongDB(db, rxJSON.URL)
@@ -1173,6 +1185,7 @@ func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLongT, w http.ResponseWri
 			return
 		}
 
+		//w.Header().Set("Authorization", uuid)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		w.Write(txData)
@@ -1196,6 +1209,7 @@ func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLongT, w http.ResponseWri
 		return
 	}
 
+	w.Header().Set("Authorization", uuid)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	w.Write(txData)
@@ -1456,7 +1470,18 @@ func internalDeleteUserURLs(db *sql.DB, w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Удаление данных
-	deleteAllByShortDB(db, rxArray)
+	uuid := r.Header.Get("Authorization")
+
+	if err := deleteAllByShortDB(db, rxArray, uuid); err != nil {
+		logger.Log.Error("Ошибка удаления данных",
+			zap.Error(err),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 
 	w.WriteHeader(http.StatusAccepted)
 }
@@ -1467,7 +1492,9 @@ func internalDeleteUserURLs(db *sql.DB, w http.ResponseWriter, r *http.Request) 
 //
 // db - указатель на БД.
 // shortURLs - массив кротких URL.
-func deleteAllByShortDB(db *sql.DB, shortURLs []string) error {
+func deleteAllByShortDB(db *sql.DB, shortURLs []string, uuid string) error {
+
+	_ = uuid
 
 	// Проверка аргументов
 	if db == nil {
@@ -1480,34 +1507,16 @@ func deleteAllByShortDB(db *sql.DB, shortURLs []string) error {
 		return errors.New("нет данных в аргументе shortURLs")
 	}
 
-	// Начало транзакции
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("ошибка начала транзакции: %w", err)
-	}
-
-	// Удаление
 	query := `DELETE FROM shortener WHERE short = $1`
 	for _, shortURL := range shortURLs {
-		_, err := tx.Exec(query, shortURL)
+		_, err := db.Exec(query, shortURL)
 		if err != nil {
 			logger.Log.Error("Ошибка при удалении данных",
 				zap.Error(err),
 				zap.String("short", shortURL),
 			)
-			tx.Rollback()
-			return fmt.Errorf("ошибка удаления: <%s>: <%w>", shortURL, err)
 		}
 	}
-
-	// Завершение транзакции
-	if err := tx.Commit(); err != nil {
-		logger.Log.Error("ошибка фиксации транзакции по удалению данных",
-			zap.Error(err),
-		)
-		return fmt.Errorf("ошибка фиксации транзакции по удалению данных: %w", err)
-	}
-
 	return nil
 }
 
@@ -1708,7 +1717,7 @@ func ClearShortenerTable(db *sql.DB) error {
 // Параметры:
 //
 // str - строка, для записи в файл.
-
+/*
 func WriteInFileDebugData(str string) {
 	filename := "debug.txt"
 
@@ -1724,3 +1733,4 @@ func WriteInFileDebugData(str string) {
 		log.Fatalf("ошибка <%v> записи в файл <%s>", err, filename)
 	}
 }
+*/

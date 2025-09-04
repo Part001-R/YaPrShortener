@@ -51,7 +51,7 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 			useDBT:     true,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			contentTypeT:   "application/json",
@@ -65,7 +65,7 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 			useDBT:     false,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			contentTypeT:   "application/json",
@@ -175,7 +175,7 @@ func Test_internalShortURLFromLong_FAULT(t *testing.T) {
 			bodyT:      "",
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			useConfT:       true,
@@ -189,7 +189,7 @@ func Test_internalShortURLFromLong_FAULT(t *testing.T) {
 			bodyT:      "https://practicum.yandex.ru/",
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			useConfT:       false,
@@ -263,7 +263,7 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 			useDBT:       true,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			wantStatusCode: http.StatusCreated,
@@ -277,7 +277,7 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 			useDBT:       false,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			wantStatusCode: http.StatusCreated,
@@ -390,7 +390,7 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 			longURLT:   rxLongURLT{},
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			useConfT:       true,
@@ -404,7 +404,7 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 			longURLT:   rxLongURLT{URL: "https://practicum.yandex.ru"},
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			useConfT:       true,
@@ -1168,7 +1168,7 @@ func Test_workWithRxData_SUCCESS(t *testing.T) {
 			useDB:    true,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 		},
@@ -1178,7 +1178,7 @@ func Test_workWithRxData_SUCCESS(t *testing.T) {
 			useDB:    false,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 		},
@@ -1198,7 +1198,8 @@ func Test_workWithRxData_SUCCESS(t *testing.T) {
 				db = nil
 			}
 
-			shortURL, err := workWithRxData(db, conf, tt.longURLT)
+			shortURL, uuid, err := workWithRxData(db, conf, tt.longURLT)
+			_ = uuid
 			require.NoErrorf(t, err, "неожиданная ошибка <%v>", err)
 
 			if !tt.useDB {
@@ -1266,7 +1267,7 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 			longURLT:    "",
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			wantErrorT: "в принятом аргументе rxLongURL, нет содержимого",
@@ -1277,7 +1278,7 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 			longURLT:    "https://practicum.yandex.ru/",
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			wantErrorT: "в принятом аргументе sl, нет указателя",
@@ -1296,7 +1297,7 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 				conf = nil
 			}
 
-			_, err = workWithRxData(db, conf, tt.longURLT)
+			_, _, err = workWithRxData(db, conf, tt.longURLT)
 			assert.Equalf(t, tt.wantErrorT, err.Error(), "ожидалась ошибка <%s>, а принято <%s>", tt.wantErrorT, err.Error())
 		})
 	}
@@ -1649,7 +1650,7 @@ func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 	}
 }
 
-func Test_InternalDeleteUserURLs_SUCCESS(t *testing.T) {
+func Test_InternalDeleteUserURLs_SUCCESS_1(t *testing.T) {
 
 	// Данные для тестов
 	testData := []struct {
@@ -1667,17 +1668,19 @@ func Test_InternalDeleteUserURLs_SUCCESS(t *testing.T) {
 			methodReqT: http.MethodDelete,
 			shortT:     []string{"short1", "short2"},
 			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectBegin()
 
-				mock.ExpectExec("DELETE FROM").
+				//mock.ExpectBegin()
+
+				// Указываем полный запрос для удаления
+				mock.ExpectExec("DELETE FROM shortener WHERE short = $1").
 					WithArgs("short1").
-					WillReturnResult(sqlmock.NewResult(1, 1))
+					WillReturnResult(sqlmock.NewResult(0, 1))
 
-				mock.ExpectExec("DELETE FROM").
+				mock.ExpectExec("DELETE FROM shortener WHERE short = $1").
 					WithArgs("short2").
-					WillReturnResult(sqlmock.NewResult(2, 1))
+					WillReturnResult(sqlmock.NewResult(0, 1))
 
-				mock.ExpectCommit()
+				//mock.ExpectCommit()
 			},
 			useDB:          true,
 			wantStatusCode: http.StatusAccepted,
@@ -1698,16 +1701,18 @@ func Test_InternalDeleteUserURLs_SUCCESS(t *testing.T) {
 			req := httptest.NewRequest(tt.methodReqT, tt.urlT, bytes.NewBuffer(body))
 			res := httptest.NewRecorder()
 
-			if !tt.useDB {
-				db = nil
-			}
+			/*
+				if !tt.useDB {
+					db = nil
+				}
+			*/
 
 			internalDeleteUserURLs(db, res, req)
 
 			resp := res.Result()
 			defer resp.Body.Close()
 
-			assert.Equalf(t, http.StatusAccepted, resp.StatusCode, "ожилася код <%d>, а принят <%d>", http.StatusAccepted, resp.StatusCode)
+			assert.Equalf(t, http.StatusAccepted, resp.StatusCode, "ожидася код <%d>, а принят <%d>", http.StatusAccepted, resp.StatusCode)
 
 			if tt.useDB {
 				err = mock.ExpectationsWereMet()
