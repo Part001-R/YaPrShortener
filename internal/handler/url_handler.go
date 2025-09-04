@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/Part001-R/YaPrShortener/internal/config/config"
-	"github.com/Part001-R/YaPrShortener/internal/service/authorisation"
+	"github.com/Part001-R/YaPrShortener/internal/service/authoriz"
 	gz "github.com/Part001-R/YaPrShortener/internal/service/gzip"
 	"github.com/Part001-R/YaPrShortener/internal/service/logger"
 	_ "github.com/lib/pq"
@@ -565,7 +565,7 @@ func storageDBURLSimple(db *sql.DB, longURL, shortURL, uuid string) error {
 // tx - указатель на транзакцию.
 // longURL - длинное представление исходного URL.
 // shortURL - значение сокращения URL.
-func storageDBURLtx(tx *sql.Tx, longURL, shortURL string) error {
+func storageDBURLtx(tx *sql.Tx, longURL, shortURL, uuid string) error {
 
 	// Проверка аргументов
 	if tx == nil {
@@ -580,8 +580,8 @@ func storageDBURLtx(tx *sql.Tx, longURL, shortURL string) error {
 
 	// Сохранение (обновление) пары соответствия в БД
 	str := `
-		INSERT INTO shortener (long, short) 
-		VALUES ($1, $2) 
+		INSERT INTO shortener (long, short, uuid) 
+		VALUES ($1, $2, $3) 
 		ON CONFLICT (long) DO UPDATE 
 		SET short = EXCLUDED.short
 		RETURNING id;
@@ -590,7 +590,7 @@ func storageDBURLtx(tx *sql.Tx, longURL, shortURL string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err := tx.ExecContext(ctx, str, longURL, shortURL)
+	_, err := tx.ExecContext(ctx, str, longURL, shortURL, uuid)
 	if err != nil {
 		return err
 	}
@@ -638,7 +638,7 @@ func actionStorageDBURLSimple(db *sql.DB, longURL, uuid string) (string, error) 
 //
 // tx - указатель на транзакцию.
 // longURL - длинное представление URL.
-func actionStorageDBURLtx(tx *sql.Tx, longURL string) (string, error) {
+func actionStorageDBURLtx(tx *sql.Tx, longURL, uuid string) (string, error) {
 
 	// Проверки акргументов
 	if tx == nil {
@@ -655,7 +655,7 @@ func actionStorageDBURLtx(tx *sql.Tx, longURL string) (string, error) {
 	}
 
 	// Сохранение в БД
-	err = storageDBURLtx(tx, longURL, shortURL)
+	err = storageDBURLtx(tx, longURL, shortURL, uuid)
 	if err != nil {
 		return "", err // ожидается появление ошибки по уникальности короткого представления
 	}
@@ -669,7 +669,7 @@ func actionStorageDBURLtx(tx *sql.Tx, longURL string) (string, error) {
 //
 // db - указатель на БД.
 // batchLongURL - массив длинных ссылок.
-func allActionsStorageBatchDBURL(db *sql.DB, batchLongURL []rxLongURLBatchT, baseAddrShortURL string) ([]txShortURLBatchT, error) {
+func allActionsStorageBatchDBURL(db *sql.DB, batchLongURL []rxLongURLBatchT, baseAddrShortURL, uuid string) ([]txShortURLBatchT, error) {
 
 	// Проверка аргументов
 	if db == nil {
@@ -716,7 +716,7 @@ func allActionsStorageBatchDBURL(db *sql.DB, batchLongURL []rxLongURLBatchT, bas
 
 				v.OriginalURL = strings.Trim(v.OriginalURL, "\"")
 
-				shortURL, err = actionStorageDBURLtx(tx, v.OriginalURL)
+				shortURL, err = actionStorageDBURLtx(tx, v.OriginalURL, uuid)
 				if err != nil && err.Error() == errUniqueShort { // проверка ошибки по уникальности короткого представления
 					continue
 				}
@@ -854,7 +854,7 @@ func workWithRxData(db *sql.DB, sl *ShortLongT, rxLongURL string) (short, uuid s
 
 	if db != nil { // сохранение пары соответствия в БД
 
-		uid = authorisation.GenerateUniqueID()
+		uid = authoriz.GenerateUniqueID()
 
 		shortURL, err = actionStorageDBURLSimple(db, rxLongURL, uid)
 		if err != nil {
@@ -1341,7 +1341,11 @@ func internalShortURLFromLongBatch(db *sql.DB, sl *ShortLongT, w http.ResponseWr
 
 	if db != nil { // сохранение пары соответствия в БД
 
-		batchShortURL, err = allActionsStorageBatchDBURL(db, rxLongURLBatch, sl.BaseAddrShortURL)
+		uuid := authoriz.GenerateUniqueID()
+
+		w.Header().Set("Authorization", uuid)
+
+		batchShortURL, err = allActionsStorageBatchDBURL(db, rxLongURLBatch, sl.BaseAddrShortURL, uuid)
 		if err != nil {
 			logger.Log.Error("Ошибка при сохранении в БД",
 				zap.Error(err),
@@ -1587,8 +1591,8 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 		if len(shortLong) == 0 {
 
 			// Установка куки
-			uuid := authorisation.GenerateUniqueID() // ?
-			authorisation.SetUserCookie(w, uuid)
+			uuid := authoriz.GenerateUniqueID() // ?
+			authoriz.SetUserCookie(w, uuid)
 
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -1616,8 +1620,8 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 		if len(shortLong) == 0 {
 
 			// Установка куки
-			uuid := authorisation.GenerateUniqueID() // ?
-			authorisation.SetUserCookie(w, uuid)
+			uuid := authoriz.GenerateUniqueID() // ?
+			authoriz.SetUserCookie(w, uuid)
 
 			w.WriteHeader(http.StatusNoContent)
 			return

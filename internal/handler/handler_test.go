@@ -887,7 +887,7 @@ func Test_ShortURLFromLongBatch_SUCCESS(t *testing.T) {
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), "AAA").
 					WillReturnResult(sqlmock.NewResult(1, 1))
 				mock.ExpectCommit()
 			},
@@ -903,7 +903,7 @@ func Test_ShortURLFromLongBatch_SUCCESS(t *testing.T) {
 
 			tt.initMockT(mock)
 
-			shortData, err := allActionsStorageBatchDBURL(db, tt.batchT, "http://localhost:8080/")
+			shortData, err := allActionsStorageBatchDBURL(db, tt.batchT, "http://localhost:8080/", "AAA")
 			require.NoErrorf(t, err, "ошибка при работе с БД <%v>", err)
 
 			assert.Equalf(t, len(tt.batchT), len(shortData), "ожидаемая длинна слайса <%d> не соответствует полученному <%d>", len(tt.batchT), len(shortData))
@@ -965,7 +965,7 @@ func Test_ShortURLFromLongBatch_FAULT(t *testing.T) {
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), "AAA").
 					WillReturnResult(sqlmock.NewResult(1, 1))
 				mock.ExpectCommit()
 			},
@@ -991,7 +991,7 @@ func Test_ShortURLFromLongBatch_FAULT(t *testing.T) {
 				tt.batchT = nil
 			}
 
-			rx, err := allActionsStorageBatchDBURL(db, tt.batchT, "http://localhost:8080/")
+			rx, err := allActionsStorageBatchDBURL(db, tt.batchT, "http://localhost:8080/", "AAA")
 			_ = rx
 
 			assert.Equalf(t, tt.wantErrorT, err.Error(), "ожидалась ошибка <%s> а принято <%s>", tt.wantErrorT, err.Error())
@@ -1450,11 +1450,11 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 				mock.ExpectBegin()
 
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://example.com/", sqlmock.AnyArg()).
+					WithArgs("https://example.com/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(2, 1))
 
 				mock.ExpectCommit()
@@ -1480,11 +1480,11 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 				mock.ExpectBegin()
 
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 
 				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://example.com/", sqlmock.AnyArg()).
+					WithArgs("https://example.com/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(2, 1))
 
 				mock.ExpectCommit()
