@@ -496,19 +496,31 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 		wantStatusCode int
 	}{
 		{
-			nameT:      "БД",
+			nameT:      "БД. Без взведённого флага delete",
 			urlT:       conf.BaseAddrShortURL + code,
 			methodReqT: http.MethodGet,
 			longURLT:   "https://practicum.yandex.ru/",
 			useDBT:     true,
 			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectQuery(`SELECT long FROM shortener`).
+				mock.ExpectQuery(`SELECT long, deleteflag FROM shortener WHERE short = \$1`).
 					WithArgs(code).
-					WillReturnRows(sqlmock.NewRows([]string{"long"}).AddRow("https://practicum.yandex.ru/"))
+					WillReturnRows(sqlmock.NewRows([]string{"long", "deleteflag"}).AddRow("https://practicum.yandex.ru/", false))
 			},
 			wantStatusCode: http.StatusTemporaryRedirect,
 		},
-
+		{
+			nameT:      "БД. С взведённым флагом delete",
+			urlT:       conf.BaseAddrShortURL + code,
+			methodReqT: http.MethodGet,
+			longURLT:   "https://practicum.yandex.ru/",
+			useDBT:     true,
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectQuery(`SELECT long, deleteflag FROM shortener WHERE short = \$1`).
+					WithArgs(code).
+					WillReturnRows(sqlmock.NewRows([]string{"long", "deleteflag"}).AddRow("https://practicum.yandex.ru/", true))
+			},
+			wantStatusCode: http.StatusGone,
+		},
 		{
 			nameT:      "Мапы и файл",
 			urlT:       conf.BaseAddrShortURL + code,
@@ -1650,7 +1662,19 @@ func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 	}
 }
 
-func Test_InternalDeleteUserURLs_SUCCESS_1(t *testing.T) {
+func Test_InternalDeleteUserURLs_SUCCESS(t *testing.T) {
+
+	conf := &ShortLongT{
+		List: &ShortLongURLT{
+			ShorByLong:  make(map[string]string),
+			LongByShort: make(map[string]string),
+			Mu:          sync.RWMutex{},
+		},
+		DB:               &ShortLongDBT{},
+		BaseAddrShortURL: ":8080/",
+		ServerAddr:       ":8080",
+		FileStoragePath:  "storage.json",
+	}
 
 	// Данные для тестов
 	testData := []struct {
@@ -1660,10 +1684,11 @@ func Test_InternalDeleteUserURLs_SUCCESS_1(t *testing.T) {
 		shortT         []string
 		initMockT      func(mock sqlmock.Sqlmock)
 		useDB          bool
+		aythorizT      string
 		wantStatusCode int
 	}{
 		{
-			nameT:      "БД",
+			nameT:      "БД (авторизация)",
 			urlT:       "http://localhost:8080/api/user/urls",
 			methodReqT: http.MethodDelete,
 			shortT:     []string{"short1", "short2"},
@@ -1683,6 +1708,7 @@ func Test_InternalDeleteUserURLs_SUCCESS_1(t *testing.T) {
 				//mock.ExpectCommit()
 			},
 			useDB:          true,
+			aythorizT:      "AAA",
 			wantStatusCode: http.StatusAccepted,
 		},
 	}
@@ -1701,13 +1727,13 @@ func Test_InternalDeleteUserURLs_SUCCESS_1(t *testing.T) {
 			req := httptest.NewRequest(tt.methodReqT, tt.urlT, bytes.NewBuffer(body))
 			res := httptest.NewRecorder()
 
-			/*
-				if !tt.useDB {
-					db = nil
-				}
-			*/
+			req.Header.Set("Authorization", tt.aythorizT)
 
-			internalDeleteUserURLs(db, res, req)
+			if !tt.useDB {
+				db = nil
+			}
+
+			internalDeleteUserURLs(db, conf, res, req)
 
 			resp := res.Result()
 			defer resp.Body.Close()
