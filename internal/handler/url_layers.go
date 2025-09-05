@@ -503,7 +503,11 @@ func internalUserURLsLayerTx(w http.ResponseWriter, shortLong []txShortURLOrigin
 	w.Header().Set("Content-Type", "application/json")
 
 	if len(shortLong) == 0 {
+
 		// Ответ
+		uuid := authoriz.GenerateUniqueID()
+		authoriz.SetUserCookie(w, uuid)
+
 		w.WriteHeader(http.StatusNoContent)
 		return nil
 	}
