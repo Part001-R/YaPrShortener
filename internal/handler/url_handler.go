@@ -1472,7 +1472,7 @@ func markFlagDelDB(db *sql.DB, sl *ShortLongT, shortURLs []string, uuid string) 
 }
 */
 
-func markFlagDelDB_2(db *sql.DB, sl *ShortLongT, shortURLs []string, uuid string) error {
+func markFlagDelDB(db *sql.DB, sl *ShortLongT, shortURLs []string, uuid string) error {
 
 	// Проверка аргументов
 	if db == nil {

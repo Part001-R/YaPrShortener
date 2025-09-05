@@ -583,7 +583,7 @@ func internalDeleteUserURLsLayerWork(db *sql.DB, sl *ShortLongT, rxData []string
 	}
 
 	// Логика
-	if err := markFlagDelDB_2(db, sl, rxData, uuid); err != nil {
+	if err := markFlagDelDB(db, sl, rxData, uuid); err != nil {
 		logger.Log.Error("Ошибка при обновлении значения флагов daleteFlag",
 			zap.Error(err),
 		)
