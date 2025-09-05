@@ -16,7 +16,7 @@ import (
 
 // internalShortURLFromLong
 
-func InternalShortURLFromLongLayerRx(r *http.Request) (string, error) {
+func InternalShortURLFromLongLayerRx(r *http.Request) (longURL, uuid string, err error) {
 
 	// Проверка аргументов
 	if r == nil {
@@ -24,7 +24,7 @@ func InternalShortURLFromLongLayerRx(r *http.Request) (string, error) {
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
-		return "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", "", fmt.Errorf("%d", http.StatusInternalServerError)
 	}
 
 	// Чтение тела запроса
@@ -44,34 +44,35 @@ func InternalShortURLFromLongLayerRx(r *http.Request) (string, error) {
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
-		return "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", "", fmt.Errorf("%d", http.StatusInternalServerError)
 	}
 	if len(rxData) == 0 {
-		return "", fmt.Errorf("%d", http.StatusBadRequest)
+		return "", "", fmt.Errorf("%d", http.StatusBadRequest)
 	}
 
 	// Результат
-	rxLongURL := string(rxData)
+	uuid = r.Header.Get("Authorization")
+	longURL = string(rxData)
 
-	return rxLongURL, nil
+	return longURL, uuid, nil
 }
 
-func InternalShortURLFromLongLayerWork(db *sql.DB, sl *ShortLongT, longURL string) (result, uuid string, err error) {
+func InternalShortURLFromLongLayerWork(db *sql.DB, sl *ShortLongT, longURL, uuidRx string) (result string, flagConflict bool, err error) {
 
 	// Проверка аргументов
 	if sl == nil {
 		logger.Log.Error("в аргементе sl нет указателя")
-		return "", "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", false, fmt.Errorf("%d", http.StatusInternalServerError)
 	}
 	if longURL == "" {
 		logger.Log.Error("в аргементе longURL нет данных")
-		return "", "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", false, fmt.Errorf("%d", http.StatusInternalServerError)
 	}
 
 	// Логика
 	errUniqueLong := `pq: duplicate key value violates unique constraint "idx_shortener_long"` // ошибка по уникальности значения длинного представления
 
-	shortURL, uid, err := workWithRxData(db, sl, longURL)
+	shortURL, err := workWithRxData(db, sl, longURL, uuidRx)
 	if err != nil && errors.Unwrap(err).Error() == errUniqueLong {
 
 		shortURL, err = readShortByLongDB(db, longURL)
@@ -81,7 +82,8 @@ func InternalShortURLFromLongLayerWork(db *sql.DB, sl *ShortLongT, longURL strin
 				zap.String("longURL", longURL),
 			)
 			err = fmt.Errorf("%d", http.StatusInternalServerError)
-			return "", "", err
+			flagConflict = false
+			return "", flagConflict, err
 		}
 
 		// Ответ
@@ -89,26 +91,28 @@ func InternalShortURLFromLongLayerWork(db *sql.DB, sl *ShortLongT, longURL strin
 		strResult := sl.BaseAddrShortURL + shortURL
 
 		result = strResult
-		return result, "", nil
+		flagConflict = true
+		return result, flagConflict, nil
 	}
 	if err != nil {
 		logger.Log.Error("Ошибка в функции workWithRxData",
 			zap.Error(err),
 		)
 		err = fmt.Errorf("%d", http.StatusInternalServerError)
-		return "", "", err
+		flagConflict = false
+		return "", flagConflict, err
 	}
 
 	// Ответ
-	// Запись добавлена
+	// Конфликта нет
 	strResult := sl.BaseAddrShortURL + shortURL
 
-	uuid = uid
 	result = strResult
-	return result, uuid, nil
+	flagConflict = false
+	return result, flagConflict, nil
 }
 
-func InternalShortURLFromLongLayerTx(w http.ResponseWriter, db *sql.DB, str, uuid string) error {
+func InternalShortURLFromLongLayerTx(w http.ResponseWriter, db *sql.DB, str string, flagConflict bool) error {
 
 	// Проверка аргументов
 	if w == nil {
@@ -121,40 +125,30 @@ func InternalShortURLFromLongLayerTx(w http.ResponseWriter, db *sql.DB, str, uui
 	}
 
 	// Логика
-	if uuid == "" && db != nil { // Если запись существует, uuid не возвращается
+	if flagConflict { // Если запись существует
 		w.Header().Set("Location", str)
 		w.WriteHeader(http.StatusConflict)
 		w.Write([]byte(str))
 		return nil
 	}
 
-	if uuid != "" && db != nil { // Если запись создана, то возвращается uuid
-		w.Header().Set("Authorization", uuid)
-		w.Header().Set("Location", str)
-		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(str))
-		return nil
-	}
-
-	if db == nil {
-		w.Header().Set("Location", str)
-		w.WriteHeader(http.StatusCreated)
-		w.Write([]byte(str))
-	}
+	w.Header().Set("Location", str)
+	w.WriteHeader(http.StatusCreated)
+	w.Write([]byte(str))
 
 	return nil
 }
 
 // internalShortURLFromLongBatch
 
-func internalShortURLFromLongBatchLayerRx(r *http.Request) ([]rxLongURLBatchT, error) {
+func internalShortURLFromLongBatchLayerRx(r *http.Request) (rxLongBatch []rxLongURLBatchT, uuidRx string, err error) {
 
 	// Проверка аргументов
 	if r == nil {
 		logger.Log.Error("Ошибка в internalShortURLFromLongBatchLayerRx",
 			zap.String("reason", "нет указателя на аргумент r"),
 		)
-		return nil, fmt.Errorf("%d", http.StatusInternalServerError)
+		return nil, "", fmt.Errorf("%d", http.StatusInternalServerError)
 	}
 
 	// Чтение тела запроса
@@ -175,7 +169,7 @@ func internalShortURLFromLongBatchLayerRx(r *http.Request) ([]rxLongURLBatchT, e
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
-		return nil, fmt.Errorf("%d", http.StatusInternalServerError)
+		return nil, "", fmt.Errorf("%d", http.StatusInternalServerError)
 	}
 
 	// Десериализация принятых данных
@@ -188,47 +182,47 @@ func internalShortURLFromLongBatchLayerRx(r *http.Request) ([]rxLongURLBatchT, e
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
-		return nil, fmt.Errorf("%d", http.StatusBadRequest)
+		return nil, "", fmt.Errorf("%d", http.StatusBadRequest)
 	}
 	if len(rxLongURLBatch) == 0 {
-		return nil, fmt.Errorf("%d", http.StatusBadRequest)
+		return nil, "", fmt.Errorf("%d", http.StatusBadRequest)
 	}
 
-	return rxLongURLBatch, nil
+	// Возврат
+	rxLongBatch = rxLongURLBatch
+	uuidRx = r.Header.Get("Authorization")
+	return rxLongBatch, uuidRx, nil
 
 }
 
-func internalShortURLFromLongBatchLayerWork(db *sql.DB, sl *ShortLongT, longBatch []rxLongURLBatchT) ([]txShortURLBatchT, string, error) {
+func internalShortURLFromLongBatchLayerWork(db *sql.DB, sl *ShortLongT, longBatch []rxLongURLBatchT, uuidRx string) ([]txShortURLBatchT, error) {
 
 	// Проверка аргументов
 	if sl == nil {
 		logger.Log.Error("в аргементе sl нет указателя")
-		return nil, "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return nil, fmt.Errorf("%d", http.StatusInternalServerError)
 	}
 	if longBatch == nil {
 		logger.Log.Error("в аргементе longBatch нет указателя")
-		return nil, "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return nil, fmt.Errorf("%d", http.StatusInternalServerError)
 	}
 	if len(longBatch) == 0 {
 		logger.Log.Error("в аргементе longBatch нет данных")
-		return nil, "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return nil, fmt.Errorf("%d", http.StatusInternalServerError)
 	}
 
 	// Логика
 	batchShortURL := make([]txShortURLBatchT, 0)
 	var err error
-	var uid string
 
 	if db != nil { // БД
 
-		uid = authoriz.GenerateUniqueID()
-
-		batchShortURL, err = allActionsStorageBatchDBURL(db, longBatch, sl.BaseAddrShortURL, uid)
+		batchShortURL, err = allActionsStorageBatchDBURL(db, longBatch, sl.BaseAddrShortURL, uuidRx)
 		if err != nil {
 			logger.Log.Error("Ошибка при сохранении в БД",
 				zap.Error(err),
 			)
-			return nil, "", fmt.Errorf("%d", http.StatusInternalServerError)
+			return nil, fmt.Errorf("%d", http.StatusInternalServerError)
 		}
 	}
 
@@ -239,7 +233,7 @@ func internalShortURLFromLongBatchLayerWork(db *sql.DB, sl *ShortLongT, longBatc
 			logger.Log.Error("Ошибка при сохранении в мапы",
 				zap.Error(err),
 			)
-			return nil, "", fmt.Errorf("%d", http.StatusInternalServerError)
+			return nil, fmt.Errorf("%d", http.StatusInternalServerError)
 		}
 
 		err = storageFileURL(sl.FileStoragePath, sl.List.ShorByLong)
@@ -247,7 +241,7 @@ func internalShortURLFromLongBatchLayerWork(db *sql.DB, sl *ShortLongT, longBatc
 			logger.Log.Error("Ошибка при сохранении в файл",
 				zap.Error(err),
 			)
-			return nil, "", fmt.Errorf("%d", http.StatusInternalServerError)
+			return nil, fmt.Errorf("%d", http.StatusInternalServerError)
 		}
 
 		batchShortURL, err = prapareBatchResponse(sl.List.LongByShort, longBatch, sl)
@@ -255,15 +249,15 @@ func internalShortURLFromLongBatchLayerWork(db *sql.DB, sl *ShortLongT, longBatc
 			logger.Log.Error("Ошибка при подготовке ответного batch",
 				zap.Error(err),
 			)
-			return nil, "", fmt.Errorf("%d", http.StatusInternalServerError)
+			return nil, fmt.Errorf("%d", http.StatusInternalServerError)
 		}
 	}
 
 	// Результат
-	return batchShortURL, uid, nil
+	return batchShortURL, nil
 }
 
-func internalShortURLFromLongBatchLayerTx(w http.ResponseWriter, shortBatch []txShortURLBatchT, uuid string) error {
+func internalShortURLFromLongBatchLayerTx(w http.ResponseWriter, shortBatch []txShortURLBatchT) error {
 
 	// Проверка аргументов
 	if w == nil {
@@ -289,9 +283,6 @@ func internalShortURLFromLongBatchLayerTx(w http.ResponseWriter, shortBatch []tx
 	}
 
 	// Ответ
-	if uuid != "" {
-		w.Header().Set("Authorization", uuid)
-	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	w.Write(txData)
@@ -301,12 +292,12 @@ func internalShortURLFromLongBatchLayerTx(w http.ResponseWriter, shortBatch []tx
 
 // internalShortURLFromLongJSON
 
-func internalShortURLFromLongJSONLayerRx(r *http.Request) (rxLongURLT, error) {
+func internalShortURLFromLongJSONLayerRx(r *http.Request) (rxLong rxLongURLT, uuidRx string, err error) {
 
 	// Проверка аргументов
 	if r == nil {
 		logger.Log.Error("в аргументе r нет указателя")
-		return rxLongURLT{}, fmt.Errorf("%d", http.StatusInternalServerError)
+		return rxLongURLT{}, "", fmt.Errorf("%d", http.StatusInternalServerError)
 	}
 
 	// Логика
@@ -326,42 +317,44 @@ func internalShortURLFromLongJSONLayerRx(r *http.Request) (rxLongURLT, error) {
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
-		return rxLongURLT{}, fmt.Errorf("%d", http.StatusInternalServerError)
+		return rxLongURLT{}, "", fmt.Errorf("%d", http.StatusInternalServerError)
 	}
 	if len(rxData) == 0 {
-		return rxLongURLT{}, fmt.Errorf("%d", http.StatusBadRequest)
+		return rxLongURLT{}, "", fmt.Errorf("%d", http.StatusBadRequest)
 	}
 
 	var rxJSON = rxLongURLT{}
 	err = json.Unmarshal(rxData, &rxJSON)
 	if err != nil {
-		return rxLongURLT{}, fmt.Errorf("%d", http.StatusBadRequest)
+		return rxLongURLT{}, "", fmt.Errorf("%d", http.StatusBadRequest)
 	}
 	if rxJSON.URL == "" {
-		return rxLongURLT{}, fmt.Errorf("%d", http.StatusBadRequest)
+		return rxLongURLT{}, "", fmt.Errorf("%d", http.StatusBadRequest)
 	}
 
 	// Результат
-	return rxJSON, nil
+	uuidRx = r.Header.Get("Authorization")
+	rxLong = rxJSON
+
+	return rxLong, uuidRx, nil
 }
 
-func internalShortURLFromLongJSONLayerWork(db *sql.DB, sl *ShortLongT, rxJSON rxLongURLT) (short, uuid string, err error) {
+func internalShortURLFromLongJSONLayerWork(db *sql.DB, sl *ShortLongT, rxJSON rxLongURLT, uuidRx string) (short string, flagConflict bool, err error) {
 
 	// Проверка аргументов
 	if sl == nil {
 		logger.Log.Error("в аргементе sl нет указателя")
-		return "", "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", false, fmt.Errorf("%d", http.StatusInternalServerError)
 	}
 	if rxJSON.URL == "" {
 		logger.Log.Error("в аргементе rxJSON.URL нет данных")
-		return "", "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", false, fmt.Errorf("%d", http.StatusInternalServerError)
 	}
 
 	// Логика
 	errUniqueLong := `pq: duplicate key value violates unique constraint "idx_shortener_long"` // ошибка по уникальности значения длинного представления
 
-	shortURL, uid, err := workWithRxData(db, sl, rxJSON.URL)
-
+	shortURL, err := workWithRxData(db, sl, rxJSON.URL, uuidRx)
 	if err != nil && errors.Unwrap(err).Error() == errUniqueLong {
 
 		shortURL, err = readShortByLongDB(db, rxJSON.URL)
@@ -370,25 +363,22 @@ func internalShortURLFromLongJSONLayerWork(db *sql.DB, sl *ShortLongT, rxJSON rx
 				zap.Error(err),
 				zap.String("longURL", rxJSON.URL),
 			)
-			return "", "", fmt.Errorf("%d", http.StatusInternalServerError)
+			return "", false, fmt.Errorf("%d", http.StatusInternalServerError)
 		}
 
-		// Ответ без uuid
-		strResult := sl.BaseAddrShortURL + shortURL
-
-		short = strResult
-		return short, "", nil
+		// Ответ
+		flagConflict = true
+		short = sl.BaseAddrShortURL + shortURL
+		return short, flagConflict, nil
 	}
 
-	// Ответ с uuid
-	strResult := sl.BaseAddrShortURL + shortURL
-
-	short = strResult
-	uuid = uid
-	return short, uuid, nil
+	// Ответ
+	flagConflict = false
+	short = sl.BaseAddrShortURL + shortURL
+	return short, flagConflict, nil
 }
 
-func internalShortURLFromLongJSONLayerTx(w http.ResponseWriter, short, uuid string, db *sql.DB) error {
+func internalShortURLFromLongJSONLayerTx(w http.ResponseWriter, short string, flagConflict bool) error {
 
 	// Проверка аргументов
 	if w == nil {
@@ -413,15 +403,7 @@ func internalShortURLFromLongJSONLayerTx(w http.ResponseWriter, short, uuid stri
 	}
 
 	// Ответ
-	if uuid != "" && db != nil {
-		w.Header().Set("Authorization", uuid)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		w.Write(txData)
-		return nil
-	}
-
-	if uuid == "" && db != nil {
+	if flagConflict {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		w.Write(txData)
@@ -508,6 +490,8 @@ func internalUserURLsLayerTx(w http.ResponseWriter, shortLong []txShortURLOrigin
 		uuid := authoriz.GenerateUniqueID()
 		authoriz.SetUserCookie(w, uuid)
 
+		authoriz.UUID = uuid // ?
+
 		w.WriteHeader(http.StatusNoContent)
 		return nil
 	}
@@ -529,7 +513,7 @@ func internalUserURLsLayerTx(w http.ResponseWriter, shortLong []txShortURLOrigin
 
 // internalDeleteUserURLs
 
-func internalDeleteUserURLsLayerRx(r *http.Request) ([]string, string, error) {
+func internalDeleteUserURLsLayerRx(r *http.Request) (rxArr []string, uuidRx string, err error) {
 
 	// Проверка аргументов
 	if r == nil {
@@ -538,7 +522,7 @@ func internalDeleteUserURLsLayerRx(r *http.Request) ([]string, string, error) {
 	}
 
 	// Логика
-	uuid := r.Header.Get("Authorization")
+	uuidRx = r.Header.Get("Authorization")
 
 	rxByteBody, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -571,10 +555,11 @@ func internalDeleteUserURLsLayerRx(r *http.Request) ([]string, string, error) {
 	}
 
 	// Ответ
-	return rxArray, uuid, nil
+	rxArr = rxArray
+	return rxArr, uuidRx, nil
 }
 
-func internalDeleteUserURLsLayerWork(db *sql.DB, sl *ShortLongT, rxData []string, uuid string) error {
+func internalDeleteUserURLsLayerWork(db *sql.DB, sl *ShortLongT, rxData []string, uuidRx string) error {
 
 	// Проверка аргументов
 	if rxData == nil {
@@ -587,7 +572,7 @@ func internalDeleteUserURLsLayerWork(db *sql.DB, sl *ShortLongT, rxData []string
 	}
 
 	// Логика
-	if err := markFlagDelDB(db, sl, rxData, uuid); err != nil {
+	if err := markFlagDelDB(db, sl, rxData, uuidRx); err != nil {
 		logger.Log.Error("Ошибка при обновлении значения флагов daleteFlag",
 			zap.Error(err),
 		)

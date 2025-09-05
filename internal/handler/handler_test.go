@@ -41,10 +41,11 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 		useDBT         bool
 		initMockT      func(mock sqlmock.Sqlmock)
 		contentTypeT   string
+		uuid           string
 		wantStatusCode int
 	}{
 		{
-			nameT:      "Запись в БД",
+			nameT:      "Запись в БД (Authorization)",
 			urlT:       "http://localhost:8080",
 			methodReqT: http.MethodPost,
 			longURLT:   "https://practicum.yandex.ru/",
@@ -55,6 +56,7 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			contentTypeT:   "application/json",
+			uuid:           "AAA",
 			wantStatusCode: http.StatusCreated,
 		},
 		{
@@ -69,6 +71,7 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			contentTypeT:   "application/json",
+			uuid:           "AAA",
 			wantStatusCode: http.StatusCreated,
 		},
 	}
@@ -1172,12 +1175,14 @@ func Test_workWithRxData_SUCCESS(t *testing.T) {
 		nameTest  string
 		longURLT  string
 		useDB     bool
+		uuid      string
 		initMockT func(mock sqlmock.Sqlmock)
 	}{
 		{
 			nameTest: "сохранение в БД",
 			longURLT: "https://practicum.yandex.ru/",
 			useDB:    true,
+			uuid:     "AAA",
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
@@ -1188,6 +1193,7 @@ func Test_workWithRxData_SUCCESS(t *testing.T) {
 			nameTest: "сохранение в мапы и файл",
 			longURLT: "https://practicum.yandex.ru/",
 			useDB:    false,
+			uuid:     "AAA",
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
@@ -1210,8 +1216,7 @@ func Test_workWithRxData_SUCCESS(t *testing.T) {
 				db = nil
 			}
 
-			shortURL, uuid, err := workWithRxData(db, conf, tt.longURLT)
-			_ = uuid
+			shortURL, err := workWithRxData(db, conf, tt.longURLT, tt.uuid)
 			require.NoErrorf(t, err, "неожиданная ошибка <%v>", err)
 
 			if !tt.useDB {
@@ -1271,6 +1276,7 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 		usePtrConfT bool
 		longURLT    string
 		initMockT   func(mock sqlmock.Sqlmock)
+		uuid        string
 		wantErrorT  string
 	}{
 		{
@@ -1282,6 +1288,7 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
+			uuid:       "AAA",
 			wantErrorT: "в принятом аргументе rxLongURL, нет содержимого",
 		},
 		{
@@ -1293,6 +1300,7 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
+			uuid:       "AAA",
 			wantErrorT: "в принятом аргументе sl, нет указателя",
 		},
 	}
@@ -1309,7 +1317,7 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 				conf = nil
 			}
 
-			_, _, err = workWithRxData(db, conf, tt.longURLT)
+			_, err = workWithRxData(db, conf, tt.longURLT, tt.uuid)
 			assert.Equalf(t, tt.wantErrorT, err.Error(), "ожидалась ошибка <%s>, а принято <%s>", tt.wantErrorT, err.Error())
 		})
 	}
@@ -1746,6 +1754,86 @@ func Test_InternalDeleteUserURLs_SUCCESS(t *testing.T) {
 			}
 
 		})
+	}
+}
+
+func Benchmark_InternalDeleteUserURLs_SUCCESS(b *testing.B) {
+	conf := &ShortLongT{
+		List: &ShortLongURLT{
+			ShorByLong:  make(map[string]string),
+			LongByShort: make(map[string]string),
+			Mu:          sync.RWMutex{},
+		},
+		DB:               &ShortLongDBT{},
+		BaseAddrShortURL: ":8080/",
+		ServerAddr:       ":8080",
+		FileStoragePath:  "storage.json",
+	}
+
+	// Данные для тестов
+	testData := []struct {
+		nameT          string
+		urlT           string
+		methodReqT     string
+		shortT         []string
+		initMockT      func(mock sqlmock.Sqlmock)
+		useDB          bool
+		aythorizT      string
+		wantStatusCode int
+	}{
+		{
+			nameT:      "БД (авторизация)",
+			urlT:       "http://localhost:8080/api/user/urls",
+			methodReqT: http.MethodDelete,
+			shortT:     []string{"short1", "short2"},
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectExec("DELETE FROM shortener WHERE short = $1").
+					WithArgs("short1").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+
+				mock.ExpectExec("DELETE FROM shortener WHERE short = $1").
+					WithArgs("short2").
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			useDB:          true,
+			aythorizT:      "AAA",
+			wantStatusCode: http.StatusAccepted,
+		},
+	}
+
+	for i := 0; i < b.N; i++ {
+		for _, tt := range testData {
+
+			b.Run(tt.nameT, func(b *testing.B) {
+				db, mock, err := sqlmock.New()
+				require.NoError(b, err)
+				defer db.Close()
+
+				body, err := json.Marshal(tt.shortT)
+				require.NoErrorf(b, err, "неожиданная ошибка при сериализации данных: <%v>", err)
+
+				req := httptest.NewRequest(tt.methodReqT, tt.urlT, bytes.NewBuffer(body))
+				res := httptest.NewRecorder()
+
+				req.Header.Set("Authorization", tt.aythorizT)
+
+				if !tt.useDB {
+					db = nil
+				}
+
+				internalDeleteUserURLs(db, conf, res, req)
+
+				resp := res.Result()
+				defer resp.Body.Close()
+
+				assert.Equalf(b, http.StatusAccepted, resp.StatusCode, "ожидася код <%d>, а принят <%d>", http.StatusAccepted, resp.StatusCode)
+
+				if tt.useDB {
+					err = mock.ExpectationsWereMet()
+					assert.NoErrorf(b, err, "неожиданная ошибка при проверке выполнения mock: <%v>", err)
+				}
+			})
+		}
 	}
 }
 
