@@ -25,6 +25,7 @@ type paramsURLT struct {
 	closeConDB       func()
 	storageMetrics   handler.MetricsI
 	storageLongShort handler.ShortLongI
+	shortLongDB      *handler.ShortLongDBT
 }
 
 type checkReasonStopT struct {
@@ -111,6 +112,7 @@ func prepare() (*paramsURLT, error) {
 		closeConDB:       funcCloseDB,
 		storageMetrics:   storageMetrics,
 		storageLongShort: storageLongShort,
+		shortLongDB:      shortLongDB,
 	}, nil
 }
 
@@ -290,6 +292,9 @@ func actions(params *paramsURLT, cr *chi.Mux) error {
 	chStorageErr := make(chan error)
 	go periodSaveMetrics(params, chStorageErr)
 
+	// Запуск обработчика асинхронной очистки таблицы shortener БД.
+	go asynClearShortenerTableDB(params.shortLongDB.Ptr, params.shortLongDB.ChForDelete, params.shortLongDB.ChDoDelete)
+
 	// Сигналы остановки
 	sigSys := make(chan os.Signal, 1)
 	signal.Notify(sigSys, syscall.SIGINT, syscall.SIGTERM)
@@ -330,8 +335,9 @@ func handlersShortener(cr *chi.Mux, p *paramsURLT) error {
 	cr.Get("/{id}", handler.Middleware(http.HandlerFunc(p.storageLongShort.LongURLFromShort)))
 	cr.Get("/ping", handler.Middleware(http.HandlerFunc(p.storageLongShort.PingDB)))
 	cr.Post("/api/shorten/batch", handler.Middleware(http.HandlerFunc(p.storageLongShort.ShortURLFromLongBatch)))
-
 	cr.Get("/api/user/urls", handler.Middleware(http.HandlerFunc(p.storageLongShort.UserURLs)))
+
+	cr.Delete("/api/user/urls", handler.Middleware(http.HandlerFunc(p.storageLongShort.DeleteUserURLs)))
 
 	return nil
 }
@@ -358,4 +364,64 @@ func handlersMetric(cr *chi.Mux, p *paramsURLT) error {
 	cr.Post("/updates/", handler.Middleware(http.HandlerFunc(p.storageMetrics.UpdateMetricByTypeAndNameBatch)))
 
 	return nil
+}
+
+// Функция реализующая асинхронную очистку таблицы shortener БД.
+//
+// Параметры:
+//
+// db - указатель на БД.
+// rxChForDelete - канал для приёма информации по удаляемой строке.
+// rxChDoDelete - канал для приёма признака завершения накопления и запуска очистки таблицы.
+func asynClearShortenerTableDB(db *sql.DB, rxChForDelete chan handler.DeleteDBT, rxChDoDelete chan struct{}) {
+
+	rxMarkData := make([]handler.DeleteDBT, 0)
+
+	for {
+		select {
+		case deleteData, ok := <-rxChForDelete: // накопление данных для удаления
+			if !ok {
+				logger.Log.Error("Ошибка при получении данных из канала. Канал закрыт")
+				return
+			}
+			rxMarkData = append(rxMarkData, deleteData)
+
+		case <-rxChDoDelete: // приём признака завершения накопления
+
+			if len(rxMarkData) > 0 {
+
+				cnt := 0
+				for _, data := range rxMarkData {
+
+					query := `DELETE FROM shortener WHERE short = $1 AND uuid = $2 AND deleteflag = true`
+
+					result, err := db.Exec(query, data.Short, data.UUID)
+					if err != nil {
+						logger.Log.Error("Ошибка при удалении данных",
+							zap.Error(err),
+							zap.String("short", data.Short),
+						)
+						continue
+					}
+					numb, err := result.RowsAffected()
+					if err != nil {
+						logger.Log.Error("Ошибка при получении номера строки после удаления",
+							zap.Error(err),
+							zap.String("short", data.Short),
+						)
+						continue
+					}
+					if numb > 0 {
+						cnt++
+					}
+				}
+				// Очистка накопления
+				rxMarkData = make([]handler.DeleteDBT, 0)
+
+				logger.Log.Info("Очистка таблицы shortener завершена",
+					zap.String("удалено строк", fmt.Sprintf("%d", cnt)),
+				)
+			}
+		}
+	}
 }
