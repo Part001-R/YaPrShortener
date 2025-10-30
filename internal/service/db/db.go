@@ -1,3 +1,8 @@
+// db пакет, реализует взаимодействие с БД, при запуске приложения.
+//
+// MigrationUpDB - реализация Up миграции.
+// workDir - определение рабочей директории.
+// ConnectDB - подключение к БД.
 package db
 
 import (
@@ -13,36 +18,38 @@ import (
 	"go.uber.org/zap"
 )
 
-// Функция реализует миграцию Up БД. Возвращает ошибку.
+const head = "YaPrShortener"
+
+// MigrationUpDB реализует миграцию Up БД. Возвращает ошибку.
 //
 // Параметры:
 //
-// config - конфигурация.
+//	db - указатель на БД.
 func MigrationUpDB(db *sql.DB) error {
 
-	// Определение рабочей директории
+	// Определение рабочей директории.
 	path, err := workDir()
 	if err != nil {
 		return fmt.Errorf("ошибка при определении рабочей дирекории: <%w>", err)
 	}
 
-	// Определение пути к файлам миграции
+	// Определение пути к файлам миграции.
 	var pathFilesMigration string
 
 	switch path {
-	case "YaPrShortener/internal/service/db":
+	case head + "/internal/service/db":
 		pathFilesMigration = "../../../migrations"
-	case "YaPrShortener/cmd/shortener":
+	case head + "/cmd/shortener":
 		pathFilesMigration = "../../migrations"
-	case "YaPrShortener":
+	case head:
 		pathFilesMigration = "migrations"
-	case "YaPrShortener/YaPrShortener": // для тестов в github
+	case head + "/" + head: // для тестов в github.
 		pathFilesMigration = "migrations"
 	default:
 		return errors.New("не найдено совпадение пути в switch")
 	}
 
-	// Применение миграций
+	// Применение миграций.
 	err = goose.Up(db, pathFilesMigration)
 	if err != nil {
 		logger.Log.Error("Ошибка применения миграции БД",
@@ -54,60 +61,68 @@ func MigrationUpDB(db *sql.DB) error {
 	return nil
 }
 
-// Функция определяет рабочую директорию. Возвращает директорию и ошибку.
+// workDir определяет рабочую директорию. Возвращает директорию и ошибку.
 func workDir() (string, error) {
 
+	// Получения текущей дериктории проекта.
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("ошибка при определении рабочей директории: <%w>", err)
 	}
 
+	// Обработка данных директории.
 	pathFull := strings.Split(dir, "/")
 	startIndex := 0
-	headProject := "YaPrShortener"
 
 	for i, v := range pathFull {
-		if v == headProject {
+		if v == head {
 			startIndex = i
 			break
 		}
 	}
 
 	if startIndex == 0 {
-		return "", fmt.Errorf("голова проекта не найдена: <%s>", headProject)
+		return "", fmt.Errorf("голова проекта не найдена: <%s>", head)
 	}
 
-	// Формирование пути относительно головы проекта
+	// Формирование пути относительно головы проекта.
 	path := strings.Join(pathFull[startIndex:], "/")
 
 	return path, nil
 }
 
-// Функция реализует подключение к БД. Возвращает указатель на БД, функцию отключения и ошибку.
+// ConnectDB реализует подключение к БД. Возвращает указатель на БД, функцию отключения и ошибку.
 //
 // Параметры:
 //
-// dsn - строка подключения к БД.
+//	dsn - строка подключения к БД.
 func ConnectDB(dsn string) (*sql.DB, func(), error) {
 
+	// Проверка аргументов.
 	if dsn == "" {
 		return nil, nil, fmt.Errorf("в аргументе dsn нет содержмиого")
 	}
 
+	// Подключение к БД.
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
-		logger.Log.Error("Ошибка при подключении к БД",
-			zap.Error(err),
-		)
+		logger.Log.Error("Ошибка при подключении к БД", zap.Error(err))
+		return nil, nil, fmt.Errorf("ошибка подключения к БД:<%v>", err)
 	}
 
+	// Ping.
+	if err := db.Ping(); err != nil {
+		logger.Log.Error("Ошибка Ping после подключения к БД", zap.Error(err))
+		return nil, nil, fmt.Errorf("ошибка ping после подключения к БД:<%v>", err)
+	}
+
+	// Функция, для закрытия подключения к БД.
 	closeDB := func() {
 		if err := db.Close(); err != nil {
-			logger.Log.Error("Ошибка при закрытии подключения к БД",
-				zap.Error(err),
-			)
+			logger.Log.Error("Ошибка при закрытии подключения к БД", zap.Error(err))
 		}
 	}
 
+	// Результат.
 	return db, closeDB, nil
 }

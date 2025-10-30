@@ -13,21 +13,22 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Part001-R/YaPrShortener/internal/profile"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// URL
-
+// internalShortURLFromLong.
 func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 
-	conf := &ShortLongT{
-		List: &ShortLongURLT{
+	conf := &ShortLong{
+		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
 			LongByShort: make(map[string]string),
-			Mu:          sync.RWMutex{},
+			mu:          sync.RWMutex{},
 		},
-		DB:               &ShortLongDBT{},
+		DB:               &ShortLongDB{},
+		Observer:         nil,
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -150,11 +151,11 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 
 func Test_internalShortURLFromLong_FAULT(t *testing.T) {
 
-	conf := &ShortLongT{
-		List: &ShortLongURLT{
+	conf := &ShortLong{
+		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
 			LongByShort: make(map[string]string),
-			Mu:          sync.RWMutex{},
+			mu:          sync.RWMutex{},
 		},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
@@ -232,15 +233,16 @@ func Test_internalShortURLFromLong_FAULT(t *testing.T) {
 	}
 }
 
+// internalShortURLFromLongJSON.
 func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 
-	conf := &ShortLongT{
-		List: &ShortLongURLT{
+	conf := &ShortLong{
+		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
 			LongByShort: make(map[string]string),
-			Mu:          sync.RWMutex{},
+			mu:          sync.RWMutex{},
 		},
-		DB:               &ShortLongDBT{},
+		DB:               &ShortLongDB{},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -251,7 +253,7 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 		urlT           string
 		methodReqT     string
 		contentTypeT   string
-		longURLT       rxLongURLT
+		longURLT       rxLongURL
 		useDBT         bool
 		initMockT      func(mock sqlmock.Sqlmock)
 		wantStatusCode int
@@ -262,7 +264,7 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 			urlT:         "http://localhost:8080/api/shorten",
 			methodReqT:   http.MethodPost,
 			contentTypeT: `application/json`,
-			longURLT:     rxLongURLT{URL: "https://practicum.yandex.ru"},
+			longURLT:     rxLongURL{URL: "https://practicum.yandex.ru"},
 			useDBT:       true,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
@@ -276,7 +278,7 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 			urlT:         "http://localhost:8080/api/shorten",
 			methodReqT:   http.MethodPost,
 			contentTypeT: `application/json`,
-			longURLT:     rxLongURLT{URL: "https://practicum.yandex.ru"},
+			longURLT:     rxLongURL{URL: "https://practicum.yandex.ru"},
 			useDBT:       false,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
@@ -364,13 +366,13 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 
 func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 
-	conf := &ShortLongT{
-		List: &ShortLongURLT{
+	conf := &ShortLong{
+		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
 			LongByShort: make(map[string]string),
-			Mu:          sync.RWMutex{},
+			mu:          sync.RWMutex{},
 		},
-		DB:               &ShortLongDBT{},
+		DB:               &ShortLongDB{},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -380,7 +382,7 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 		nameT          string
 		urlT           string
 		methodReqT     string
-		longURLT       rxLongURLT
+		longURLT       rxLongURL
 		initMockT      func(mock sqlmock.Sqlmock)
 		useConfT       bool
 		contentTypeT   string
@@ -390,7 +392,7 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 			nameT:      "пустое тело",
 			urlT:       "http://localhost:8080/",
 			methodReqT: http.MethodPost,
-			longURLT:   rxLongURLT{},
+			longURLT:   rxLongURL{},
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
@@ -404,7 +406,7 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 			nameT:      "Неподдерживаемый тип контента",
 			urlT:       "http://localhost:8080/",
 			methodReqT: http.MethodPost,
-			longURLT:   rxLongURLT{URL: "https://practicum.yandex.ru"},
+			longURLT:   rxLongURL{URL: "https://practicum.yandex.ru"},
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
 					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg(), sqlmock.AnyArg()).
@@ -418,7 +420,7 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 			nameT:      "Нет указателя на конфигурацию",
 			urlT:       "http://localhost:8080/",
 			methodReqT: http.MethodPost,
-			longURLT:   rxLongURLT{URL: "https://practicum.yandex.ru"},
+			longURLT:   rxLongURL{URL: "https://practicum.yandex.ru"},
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
 					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg()).
@@ -466,15 +468,16 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 	}
 }
 
+// internalLongURLFromShort.
 func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 
-	conf := &ShortLongT{
-		List: &ShortLongURLT{
+	conf := &ShortLong{
+		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
 			LongByShort: make(map[string]string),
-			Mu:          sync.RWMutex{},
+			mu:          sync.RWMutex{},
 		},
-		DB:               &ShortLongDBT{},
+		DB:               &ShortLongDB{},
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -583,11 +586,11 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 
 func Test_internalLongURLFromShort_FAULT(t *testing.T) {
 
-	conf := &ShortLongT{
-		List: &ShortLongURLT{
+	conf := &ShortLong{
+		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
 			LongByShort: make(map[string]string),
-			Mu:          sync.RWMutex{},
+			mu:          sync.RWMutex{},
 		},
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
@@ -661,10 +664,11 @@ func Test_internalLongURLFromShort_FAULT(t *testing.T) {
 	}
 }
 
+// LoadFileURL.
 func Test_LoadFileURL_SUCCESS(t *testing.T) {
 
-	shortLong := NewShortLongURL()
-	shortLongHandler := &ShortLongT{
+	shortLong := NewShortenerMemory()
+	shortLongHandler := &ShortLong{
 		List:             shortLong,
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
@@ -721,16 +725,16 @@ func Test_LoadFileURL_FAULT(t *testing.T) {
 
 	testData := []struct {
 		nameT         string
-		mapsShortLong *ShortLongT
+		mapsShortLong *ShortLong
 		wantError     string
 	}{
 		{
 			nameT: "нет пути к файлу",
-			mapsShortLong: &ShortLongT{
-				List: &ShortLongURLT{
+			mapsShortLong: &ShortLong{
+				List: &ShortLongURL{
 					ShorByLong:  map[string]string{},
 					LongByShort: map[string]string{},
-					Mu:          sync.RWMutex{},
+					mu:          sync.RWMutex{},
 				},
 				BaseAddrShortURL: ":8080/",
 				ServerAddr:       ":8080",
@@ -740,11 +744,11 @@ func Test_LoadFileURL_FAULT(t *testing.T) {
 		},
 		{
 			nameT: "нет указателя на ShortByLong",
-			mapsShortLong: &ShortLongT{
-				List: &ShortLongURLT{
+			mapsShortLong: &ShortLong{
+				List: &ShortLongURL{
 					ShorByLong:  nil,
 					LongByShort: map[string]string{},
-					Mu:          sync.RWMutex{},
+					mu:          sync.RWMutex{},
 				},
 				BaseAddrShortURL: ":8080/",
 				ServerAddr:       ":8080",
@@ -754,11 +758,11 @@ func Test_LoadFileURL_FAULT(t *testing.T) {
 		},
 		{
 			nameT: "нет указателя на LongByShort",
-			mapsShortLong: &ShortLongT{
-				List: &ShortLongURLT{
+			mapsShortLong: &ShortLong{
+				List: &ShortLongURL{
 					ShorByLong:  map[string]string{},
 					LongByShort: nil,
-					Mu:          sync.RWMutex{},
+					mu:          sync.RWMutex{},
 				},
 				BaseAddrShortURL: ":8080/",
 				ServerAddr:       ":8080",
@@ -781,6 +785,7 @@ func Test_LoadFileURL_FAULT(t *testing.T) {
 	}
 }
 
+// storageDBURL.
 func Test_storageDBURL_SUCCESS(t *testing.T) {
 
 	testsData := []struct {
@@ -883,17 +888,18 @@ func Test_storageDBURL_FAULT(t *testing.T) {
 	}
 }
 
+// ShortURLFromLongBatch.
 func Test_ShortURLFromLongBatch_SUCCESS(t *testing.T) {
 
 	// Подготовка данных для тестов
 	testsData := []struct {
 		nameTest  string
-		batchT    []rxLongURLBatchT
+		batchT    []rxLongURLBatch
 		initMockT func(mock sqlmock.Sqlmock)
 	}{
 		{
 			nameTest: "сохранение в БД",
-			batchT: []rxLongURLBatchT{
+			batchT: []rxLongURLBatch{
 				{
 					CorrelationID: "AAA",
 					OriginalURL:   "https://practicum.yandex.ru/",
@@ -935,7 +941,7 @@ func Test_ShortURLFromLongBatch_FAULT(t *testing.T) {
 	// Подготовка данных для тестов
 	testsData := []struct {
 		nameTest   string
-		batchT     []rxLongURLBatchT
+		batchT     []rxLongURLBatch
 		initMockT  func(mock sqlmock.Sqlmock)
 		useDBT     bool
 		useBatchT  bool
@@ -943,7 +949,7 @@ func Test_ShortURLFromLongBatch_FAULT(t *testing.T) {
 	}{
 		{
 			nameTest: "нет указателя на БД",
-			batchT: []rxLongURLBatchT{
+			batchT: []rxLongURLBatch{
 				{
 					CorrelationID: "AAA",
 					OriginalURL:   "https://practicum.yandex.ru/",
@@ -962,7 +968,7 @@ func Test_ShortURLFromLongBatch_FAULT(t *testing.T) {
 		},
 		{
 			nameTest: "пустой batch",
-			batchT:   []rxLongURLBatchT{},
+			batchT:   []rxLongURLBatch{},
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
 				mock.ExpectExec("INSERT INTO").
@@ -976,7 +982,7 @@ func Test_ShortURLFromLongBatch_FAULT(t *testing.T) {
 		},
 		{
 			nameTest: "нет указателя на batch",
-			batchT:   []rxLongURLBatchT{},
+			batchT:   []rxLongURLBatch{},
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectBegin()
 				mock.ExpectExec("INSERT INTO").
@@ -1015,17 +1021,18 @@ func Test_ShortURLFromLongBatch_FAULT(t *testing.T) {
 	}
 }
 
+// storageBatchMap.
 func Test_storageBatchMap_SUCCESS(t *testing.T) {
 
 	testData := []struct {
 		nameTest string
-		batchT   []rxLongURLBatchT
+		batchT   []rxLongURLBatch
 		sByLT    map[string]string
 		lByST    map[string]string
 	}{
 		{
 			nameTest: "корректные",
-			batchT: []rxLongURLBatchT{
+			batchT: []rxLongURLBatch{
 				{
 					CorrelationID: "AAA",
 					OriginalURL:   "https://practicum.yandex.ru/",
@@ -1059,7 +1066,7 @@ func Test_storageBatchMap_FAULT(t *testing.T) {
 
 	testData := []struct {
 		nameTest   string
-		batchT     []rxLongURLBatchT
+		batchT     []rxLongURLBatch
 		sByLT      map[string]string
 		lByST      map[string]string
 		useBatchT  bool
@@ -1069,7 +1076,7 @@ func Test_storageBatchMap_FAULT(t *testing.T) {
 	}{
 		{
 			nameTest: "нет указателя на batch",
-			batchT: []rxLongURLBatchT{
+			batchT: []rxLongURLBatch{
 				{
 					CorrelationID: "AAA",
 					OriginalURL:   "https://practicum.yandex.ru/",
@@ -1088,7 +1095,7 @@ func Test_storageBatchMap_FAULT(t *testing.T) {
 		},
 		{
 			nameTest: "нет указателя на lByS",
-			batchT: []rxLongURLBatchT{
+			batchT: []rxLongURLBatch{
 				{
 					CorrelationID: "AAA",
 					OriginalURL:   "https://practicum.yandex.ru/",
@@ -1107,7 +1114,7 @@ func Test_storageBatchMap_FAULT(t *testing.T) {
 		},
 		{
 			nameTest: "нет указателя на sByL",
-			batchT: []rxLongURLBatchT{
+			batchT: []rxLongURLBatch{
 				{
 					CorrelationID: "AAA",
 					OriginalURL:   "https://practicum.yandex.ru/",
@@ -1126,7 +1133,7 @@ func Test_storageBatchMap_FAULT(t *testing.T) {
 		},
 		{
 			nameTest:   "пустой batch",
-			batchT:     []rxLongURLBatchT{},
+			batchT:     []rxLongURLBatch{},
 			sByLT:      make(map[string]string, 0),
 			lByST:      make(map[string]string, 0),
 			useBatchT:  true,
@@ -1156,15 +1163,16 @@ func Test_storageBatchMap_FAULT(t *testing.T) {
 	}
 }
 
+// workWithRxData.
 func Test_workWithRxData_SUCCESS(t *testing.T) {
 
-	conf := &ShortLongT{
-		List: &ShortLongURLT{
+	conf := &ShortLong{
+		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
 			LongByShort: make(map[string]string),
-			Mu:          sync.RWMutex{},
+			mu:          sync.RWMutex{},
 		},
-		DB:               &ShortLongDBT{},
+		DB:               &ShortLongDB{},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -1259,13 +1267,13 @@ func Test_workWithRxData_SUCCESS(t *testing.T) {
 }
 
 func Test_workWithRxData_FAULT(t *testing.T) {
-	conf := &ShortLongT{
-		List: &ShortLongURLT{
+	conf := &ShortLong{
+		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
 			LongByShort: make(map[string]string),
-			Mu:          sync.RWMutex{},
+			mu:          sync.RWMutex{},
 		},
-		DB:               &ShortLongDBT{},
+		DB:               &ShortLongDB{},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -1323,7 +1331,21 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 	}
 }
 
+// Middleware.
 func Test_Middleware_SUCCESS(t *testing.T) {
+
+	// Конфигурация
+	conf := &ShortLong{
+		List: &ShortLongURL{
+			ShorByLong:  make(map[string]string),
+			LongByShort: make(map[string]string),
+			mu:          sync.RWMutex{},
+		},
+		DB:               &ShortLongDB{},
+		BaseAddrShortURL: "http://localhost:8080/",
+		ServerAddr:       ":8080",
+		FileStoragePath:  "storage.json",
+	}
 
 	// Обработчик для теста Middleware
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1331,7 +1353,7 @@ func Test_Middleware_SUCCESS(t *testing.T) {
 		w.Write([]byte("OK"))
 	})
 
-	mw := Middleware(testHandler)
+	mw := conf.Middleware(testHandler)
 
 	testData := []struct {
 		nameTest   string
@@ -1378,13 +1400,26 @@ func Test_Middleware_SUCCESS(t *testing.T) {
 
 func Test_Middleware_FAULT(t *testing.T) {
 
+	// Конфигурация
+	conf := &ShortLong{
+		List: &ShortLongURL{
+			ShorByLong:  make(map[string]string),
+			LongByShort: make(map[string]string),
+			mu:          sync.RWMutex{},
+		},
+		DB:               &ShortLongDB{},
+		BaseAddrShortURL: "http://localhost:8080/",
+		ServerAddr:       ":8080",
+		FileStoragePath:  "storage.json",
+	}
+
 	// Обработчик для теста Middleware
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
 
-	mw := Middleware(testHandler)
+	mw := conf.Middleware(testHandler)
 
 	testData := []struct {
 		nameTest         string
@@ -1427,16 +1462,17 @@ func Test_Middleware_FAULT(t *testing.T) {
 	}
 }
 
+// internalShortURLFromLongBatch.
 func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 
 	// Конфигурация
-	conf := &ShortLongT{
-		List: &ShortLongURLT{
+	conf := &ShortLong{
+		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
 			LongByShort: make(map[string]string),
-			Mu:          sync.RWMutex{},
+			mu:          sync.RWMutex{},
 		},
-		DB:               &ShortLongDBT{},
+		DB:               &ShortLongDB{},
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -1447,7 +1483,7 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 		nameT          string
 		urlT           string
 		methodReqT     string
-		batchLongURLT  []rxLongURLBatchT
+		batchLongURLT  []rxLongURLBatch
 		initMockT      func(mock sqlmock.Sqlmock)
 		useDB          bool
 		wantStatusCode int
@@ -1456,7 +1492,7 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 			nameT:      "БД",
 			urlT:       "http://localhost:8080/api/shorten/batch",
 			methodReqT: http.MethodPost,
-			batchLongURLT: []rxLongURLBatchT{
+			batchLongURLT: []rxLongURLBatch{
 				{
 					CorrelationID: "12345",
 					OriginalURL:   "https://practicum.yandex.ru/",
@@ -1486,7 +1522,7 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 			nameT:      "Мапы",
 			urlT:       "http://localhost:8080/api/shorten/batch",
 			methodReqT: http.MethodPost,
-			batchLongURLT: []rxLongURLBatchT{
+			batchLongURLT: []rxLongURLBatch{
 				{
 					CorrelationID: "11111",
 					OriginalURL:   "https://practicum.yandex.ru/",
@@ -1552,7 +1588,7 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 			rxByte, err := io.ReadAll(resp.Body)
 			require.NoErrorf(t, err, "ошибка при чтении тела ответа")
 
-			batchShortURL := make([]txShortURLBatchT, 0)
+			batchShortURL := make([]txShortURLBatch, 0)
 
 			err = json.Unmarshal(rxByte, &batchShortURL)
 			require.NoErrorf(t, err, "ошибка десериализации")
@@ -1574,11 +1610,11 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 
 func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 
-	conf := &ShortLongT{
-		List: &ShortLongURLT{
+	conf := &ShortLong{
+		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
 			LongByShort: make(map[string]string),
-			Mu:          sync.RWMutex{},
+			mu:          sync.RWMutex{},
 		},
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
@@ -1670,15 +1706,16 @@ func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 	}
 }
 
+// InternalDeleteUserURLs.
 func Test_InternalDeleteUserURLs_SUCCESS(t *testing.T) {
 
-	conf := &ShortLongT{
-		List: &ShortLongURLT{
+	conf := &ShortLong{
+		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
 			LongByShort: make(map[string]string),
-			Mu:          sync.RWMutex{},
+			mu:          sync.RWMutex{},
 		},
-		DB:               &ShortLongDBT{},
+		DB:               &ShortLongDB{},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -1758,13 +1795,15 @@ func Test_InternalDeleteUserURLs_SUCCESS(t *testing.T) {
 }
 
 func Benchmark_InternalDeleteUserURLs_SUCCESS(b *testing.B) {
-	conf := &ShortLongT{
-		List: &ShortLongURLT{
+
+	// Подготовка конфигурации
+	conf := &ShortLong{
+		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
 			LongByShort: make(map[string]string),
-			Mu:          sync.RWMutex{},
+			mu:          sync.RWMutex{},
 		},
-		DB:               &ShortLongDBT{},
+		DB:               &ShortLongDB{},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -1801,6 +1840,7 @@ func Benchmark_InternalDeleteUserURLs_SUCCESS(b *testing.B) {
 		},
 	}
 
+	// Тесты
 	for i := 0; i < b.N; i++ {
 		for _, tt := range testData {
 
@@ -1821,6 +1861,8 @@ func Benchmark_InternalDeleteUserURLs_SUCCESS(b *testing.B) {
 					db = nil
 				}
 
+				b.ResetTimer()
+
 				internalDeleteUserURLs(db, conf, res, req)
 
 				resp := res.Result()
@@ -1835,718 +1877,8 @@ func Benchmark_InternalDeleteUserURLs_SUCCESS(b *testing.B) {
 			})
 		}
 	}
-}
-
-// Метрики
-
-func Test_UpdateMetricByTypeAndName_SUCCESS(t *testing.T) {
-
-	// подготовка
-	conf := &MetricsHandlerT{
-		Metrics: &MetricsT{
-			GaugeMetrics:   make(map[string]float64),
-			CounterMetrics: make(map[string]int64),
-			Mu:             sync.RWMutex{},
-		},
-		DB:                  &MetricsDBT{},
-		StoreIntervalMetr:   "300",
-		FileStoragePathMetr: "storageMetrics.json",
-		RestoreMetr:         "false",
-	}
-
-	conf.Metrics.GaugeMetrics["LastGC"] = 1.0
-	conf.Metrics.CounterMetrics["counter"] = 1
-
-	testsData := []struct {
-		nameT          string
-		methodT        string
-		urlT           string
-		initMockT      func(mock sqlmock.Sqlmock)
-		wantStatusCode int
-	}{
-
-		{
-			nameT:   "Корректные данные",
-			methodT: http.MethodPost,
-			urlT:    "http://localhost:8080/update/counter/NumGC/42",
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-			wantStatusCode: http.StatusOK,
-		},
-	}
-
-	// тесты
-	for _, tt := range testsData {
-		t.Run(tt.nameT, func(t *testing.T) {
-
-			db, mock, err := sqlmock.New()
-			require.NoError(t, err)
-			defer db.Close()
-
-			tt.initMockT(mock)
-
-			req := httptest.NewRequest(tt.methodT, tt.urlT, nil)
-			res := httptest.NewRecorder()
-
-			db = nil
-			internalUpdateMetricByTypeAndName(db, conf, res, req)
-
-			resp := res.Result()
-			defer func() {
-				err := resp.Body.Close()
-				assert.NoErrorf(t, err, "ошибка при закрытии потока {%v}", err)
-			}()
-
-			require.Equalf(t, tt.wantStatusCode, resp.StatusCode, "ожидался код {%d}, а принят {%d}", tt.wantStatusCode, resp.StatusCode)
-		})
-	}
-}
-
-func Test_UpdateMetricByTypeAndName_FAULT(t *testing.T) {
-
-	// подготовка
-	conf := &MetricsHandlerT{
-		Metrics: &MetricsT{
-			GaugeMetrics:   make(map[string]float64),
-			CounterMetrics: make(map[string]int64),
-			Mu:             sync.RWMutex{},
-		},
-		StoreIntervalMetr:   "300",
-		FileStoragePathMetr: "storageMetrics.json",
-		RestoreMetr:         "false",
-	}
-
-	testsData := []struct {
-		nameT          string
-		methodT        string
-		urlT           string
-		wantStatusCode int
-		initMockT      func(mock sqlmock.Sqlmock)
-		wantBody       string
-	}{
-		{
-			nameT:          "wrong metric type",
-			methodT:        http.MethodPost,
-			urlT:           "http://localhost:8080/update/wrong/PollCount/1",
-			wantStatusCode: http.StatusNotFound,
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-		},
-		{
-			nameT:          "wrong URL",
-			methodT:        http.MethodPost,
-			urlT:           "http://localhost:8080/update/counter//1",
-			wantStatusCode: http.StatusNotFound,
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-		},
-		{
-			nameT:          "wrong method",
-			methodT:        http.MethodGet,
-			urlT:           "http://localhost:8080/update/gauge/PollCount/1",
-			wantStatusCode: http.StatusBadRequest,
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-		},
-	}
-	for _, tt := range testsData {
-		t.Run(tt.nameT, func(t *testing.T) {
-			db, mock, err := sqlmock.New()
-			require.NoError(t, err)
-			defer db.Close()
-
-			tt.initMockT(mock)
-
-			req := httptest.NewRequest(tt.methodT, tt.urlT, nil)
-			res := httptest.NewRecorder()
-
-			internalUpdateMetricByTypeAndName(db, conf, res, req)
-
-			resp := res.Result()
-			defer func() {
-				err := resp.Body.Close()
-				assert.NoErrorf(t, err, "ошибка при закрытии потока {%v}", err)
-			}()
-
-			require.Equalf(t, tt.wantStatusCode, resp.StatusCode, "ожидался код {%d}, а принят {%d}", tt.wantStatusCode, resp.StatusCode)
-		})
-	}
-}
-
-func Test_ValueMetricByTypeAndName_SUCCESS(t *testing.T) {
-
-	// подготовка
-	conf := &MetricsHandlerT{
-		Metrics: &MetricsT{
-			GaugeMetrics:   make(map[string]float64),
-			CounterMetrics: make(map[string]int64),
-			Mu:             sync.RWMutex{},
-		},
-		StoreIntervalMetr:   "300",
-		FileStoragePathMetr: "storageMetrics.json",
-		RestoreMetr:         "false",
-	}
-
-	conf.Metrics.CounterMetrics["PollCount"] = 123
-
-	testsData := []struct {
-		nameT          string
-		methodT        string
-		urlT           string
-		wantStatusCode int
-		wantBody       string
-	}{
-		{
-			nameT:          "корректные данные",
-			methodT:        http.MethodGet,
-			urlT:           "http://localhost:8080/value/counter/PollCount",
-			wantStatusCode: http.StatusOK,
-			wantBody:       "123",
-		},
-	}
-	for _, tt := range testsData {
-		t.Run(tt.nameT, func(t *testing.T) {
-			req := httptest.NewRequest(tt.methodT, tt.urlT, nil)
-			res := httptest.NewRecorder()
-
-			internalValueMetricByTypeAndName(conf, res, req)
-
-			resp := res.Result()
-			defer func() {
-				err := resp.Body.Close()
-				assert.NoErrorf(t, err, "ошибка при закрытии потока {%v}", err)
-			}()
-
-			require.Equalf(t, tt.wantStatusCode, resp.StatusCode, "ожидался код {%d}, а принят {%d}", tt.wantStatusCode, resp.StatusCode)
-
-			body, err := io.ReadAll(resp.Body)
-			require.NoErrorf(t, err, "ошибка при чтении тела ответа {%v}", err)
-			assert.Equalf(t, tt.wantBody, string(body), "принято{%s} а ожидалось {%s}", tt.wantBody, string(body))
-		})
-	}
-}
-
-func Test_ValueMetricByTypeAndName_FAULT(t *testing.T) {
-	// подготовка
-	conf := &MetricsHandlerT{
-		Metrics: &MetricsT{
-			GaugeMetrics:   make(map[string]float64),
-			CounterMetrics: make(map[string]int64),
-			Mu:             sync.RWMutex{},
-		},
-		StoreIntervalMetr:   "300",
-		FileStoragePathMetr: "storageMetrics.json",
-		RestoreMetr:         "false",
-	}
-
-	testsData := []struct {
-		nameT          string
-		methodT        string
-		urlT           string
-		wantStatusCode int
-		wantBody       string
-	}{
-		{
-			nameT:          "wrong metric type",
-			methodT:        http.MethodGet,
-			urlT:           "http://localhost:8080/value/wrong/PollCount",
-			wantStatusCode: http.StatusNotFound,
-		},
-		{
-			nameT:          "wrong URL",
-			methodT:        http.MethodGet,
-			urlT:           "http://localhost:8080/value/counter//",
-			wantStatusCode: http.StatusNotFound,
-		},
-		{
-			nameT:          "wrong method",
-			methodT:        http.MethodPost,
-			urlT:           "http://localhost:8080/value/gauge/PollCount",
-			wantStatusCode: http.StatusBadRequest,
-		},
-	}
-	for _, tt := range testsData {
-		t.Run(tt.nameT, func(t *testing.T) {
-			req := httptest.NewRequest(tt.methodT, tt.urlT, nil)
-			res := httptest.NewRecorder()
-
-			internalValueMetricByTypeAndName(conf, res, req)
-
-			resp := res.Result()
-			defer func() {
-				err := resp.Body.Close()
-				assert.NoErrorf(t, err, "ошибка при закрытии потока {%v}", err)
-			}()
-
-			assert.Equalf(t, tt.wantStatusCode, resp.StatusCode, "ожидался код {%d}, а принят {%d}", tt.wantStatusCode, resp.StatusCode)
-		})
-	}
-}
-
-func TestAllMetricsHTML_SUCCESS(t *testing.T) {
-
-	testMetrics := NewMetrics()
-
-	testMetrics.CounterMetrics["PollCount"] = 10
-	testMetrics.CounterMetrics["SomeCounter"] = 5
-	testMetrics.GaugeMetrics["Alloc"] = 123.45
-	testMetrics.GaugeMetrics["RandomValue"] = 987.65
-
-	metricsHandler := &MetricsHandlerT{
-		Metrics: testMetrics,
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	res := httptest.NewRecorder()
-
-	metricsHandler.AllMetricsHTML(res, req)
-	resp := res.Result()
-	defer func() {
-		err := resp.Body.Close()
-		assert.NoErrorf(t, err, "ошибка при закрытии потока {%v}", err)
-	}()
-
-	require.Equalf(t, http.StatusOK, resp.StatusCode, "ожидался код ответа {%d}, а принят {%d}", http.StatusOK, resp.StatusCode)
-
-	expectedContentType := "text/html; charset=utf-8"
-	contentTypeRx := res.Header().Get("Content-Type")
-	require.Equalf(t, expectedContentType, contentTypeRx, "ожидается контент {%s}, а принят {%s}", expectedContentType, contentTypeRx)
-
-	body, err := io.ReadAll(resp.Body)
-	require.NoErrorf(t, err, "ошибка при чтении тела ответа {%v}", err)
-
-	responseBody := string(body)
-
-	assert.Contains(t, responseBody, "<html>", "HTML нет <html> тега")
-	assert.Contains(t, responseBody, "<title>МЕТРИКИ</title>", "HTML нет title")
-	assert.Contains(t, responseBody, "<h1>Доступные метрики</h1>", "HTML нет h1 заголовка")
-	assert.Contains(t, responseBody, "<h2>Gauge</h2>", "HTML нет Gauge заголовка")
-	assert.Contains(t, responseBody, "<h2>Counter</h2>", "HTML нет Counter заголовка")
-
-	assert.Contains(t, responseBody, "<li>Alloc: 123.450000</li>", "HTML нет соответствия Alloc")
-	assert.Contains(t, responseBody, "<li>PollCount: 10</li>", "HTML нет соответствия PollCount")
-	assert.Contains(t, responseBody, "<li>SomeCounter: 5</li>", "HTML нет соответствия SomeCounter")
-
-	assert.Contains(t, responseBody, "<li>RandomValue: 987.650000</li>", "HTML нет соответствия RandomValue")
-	assert.Contains(t, responseBody, "</li>", "HTML нет тега заурытия (</li>)")
-
-}
-
-func TestAllMetricsHTML_FAULT(t *testing.T) {
-
-	testMetrics := NewMetrics()
-
-	metricsHandler := &MetricsHandlerT{
-		Metrics: testMetrics,
-	}
-
-	testsData := []struct {
-		nameT          string
-		methodT        string
-		urlT           string
-		wantStatusCode int
-	}{
-		{
-			nameT:          "wrong method",
-			methodT:        http.MethodPost,
-			urlT:           "http://localhost:8080/",
-			wantStatusCode: http.StatusBadRequest,
-		},
-	}
-
-	for _, tt := range testsData {
-		t.Run(tt.nameT, func(t *testing.T) {
-			req := httptest.NewRequest(tt.methodT, tt.urlT, nil)
-			res := httptest.NewRecorder()
-
-			metricsHandler.AllMetricsHTML(res, req)
-			resp := res.Result()
-			defer func() {
-				err := resp.Body.Close()
-				assert.NoErrorf(t, err, "ошибка при закрытии потока {%v}", err)
-			}()
-
-			assert.Equalf(t, tt.wantStatusCode, resp.StatusCode, "ожидался код ответа {%d}, а принят {%d}", tt.wantStatusCode, resp.StatusCode)
-		})
-	}
-}
-
-func Test_MetricByJSON_SUCCESS(t *testing.T) {
-	testMetrics := NewMetrics()
-
-	metricsHandler := &MetricsHandlerT{
-		Metrics: testMetrics,
-	}
-	testsData := []struct {
-		nameT          string
-		methodT        string
-		urlT           string
-		body           Metrics
-		contentType    string
-		valueMetric    float64
-		wantStatusCode int
-	}{
-		{
-			nameT:   "данные корректны",
-			methodT: http.MethodPost,
-			urlT:    "http://localhost:8080/update",
-			body: Metrics{
-				ID:    "LastGC",
-				MType: "gauge",
-				Value: new(float64),
-			},
-			contentType:    "application/json",
-			valueMetric:    1744184459,
-			wantStatusCode: http.StatusOK,
-		},
-	}
-	for _, tt := range testsData {
-		t.Run(tt.nameT, func(t *testing.T) {
-
-			tt.body.Value = new(float64)
-			*tt.body.Value = tt.valueMetric
-			metricsHandler.Metrics.GaugeMetrics[tt.body.ID] = *tt.body.Value
-
-			rawData, err := json.Marshal(tt.body)
-			require.NoErrorf(t, err, "неожиданная ошибка сериализации <%v>", err)
-
-			txData := bytes.NewBuffer(rawData)
-
-			req := httptest.NewRequest(tt.methodT, tt.urlT, txData)
-			res := httptest.NewRecorder()
-
-			req.Header.Set("Content-Type", tt.contentType)
-
-			metricsHandler.MetricByJSON(res, req)
-			resp := res.Result()
-			defer func() {
-				err := resp.Body.Close()
-				assert.NoErrorf(t, err, "ошибка при закрытии потока {%v}", err)
-			}()
-
-			require.Equalf(t, tt.wantStatusCode, resp.StatusCode, "ожидался код {%d}, а принят {%d}", tt.wantStatusCode, resp.StatusCode)
-
-			var rxData Metrics
-
-			err = json.NewDecoder(res.Body).Decode(&rxData)
-			require.NoErrorf(t, err, "неожиданная ошибка десериализации <%v>", err)
-
-			assert.Equalf(t, tt.body.ID, rxData.ID, "ожидался ID <%s> а принят <%s>", tt.body.ID, rxData.ID)
-			assert.Equalf(t, tt.body.MType, rxData.MType, "ожидался MType <%s> а принят <%s>", tt.body.MType, rxData.MType)
-			assert.Equalf(t, *tt.body.Value, *rxData.Value, "ожидался Value <%f> а принят <%f>", *tt.body.Value, *rxData.Value)
-
-		})
-	}
-}
-
-func Test_MetricByJSON_FAULT(t *testing.T) {
-	testMetrics := NewMetrics()
-
-	metricsHandler := &MetricsHandlerT{
-		Metrics: testMetrics,
-	}
-	testsData := []struct {
-		nameT          string
-		methodT        string
-		urlT           string
-		metricsInit    Metrics
-		body           Metrics
-		contentType    string
-		valueMetric    float64
-		wantStatusCode int
-	}{
-		{
-			nameT:   "неверный метод",
-			methodT: http.MethodGet,
-			urlT:    "http://localhost:8080/update",
-			metricsInit: Metrics{
-				ID:    "LastGC",
-				MType: "gauge",
-				Value: new(float64),
-			},
-			body: Metrics{
-				ID:    "LastGC",
-				MType: "gauge",
-				Value: new(float64),
-			},
-			contentType:    "application/json",
-			valueMetric:    1744184459,
-			wantStatusCode: http.StatusBadRequest,
-		},
-		{
-			nameT:   "неверный контент",
-			methodT: http.MethodPost,
-			urlT:    "http://localhost:8080/update",
-			metricsInit: Metrics{
-				ID:    "LastGC",
-				MType: "gauge",
-				Value: new(float64),
-			},
-			body: Metrics{
-				ID:    "LastGC",
-				MType: "gauge",
-				Value: new(float64),
-			},
-			contentType:    "application/AAA",
-			valueMetric:    1744184459,
-			wantStatusCode: http.StatusBadRequest,
-		},
-		{
-			nameT:   "нет содержимого в ID",
-			methodT: http.MethodPost,
-			urlT:    "http://localhost:8080/update",
-			metricsInit: Metrics{
-				ID:    "LastGC",
-				MType: "gauge",
-				Value: new(float64),
-			},
-			body: Metrics{
-				ID:    "",
-				MType: "gauge",
-				Value: new(float64),
-			},
-			contentType:    "application/json",
-			valueMetric:    1744184459,
-			wantStatusCode: http.StatusBadRequest,
-		},
-		{
-			nameT:   "нет содержимого в MType",
-			methodT: http.MethodPost,
-			urlT:    "http://localhost:8080/update",
-			metricsInit: Metrics{
-				ID:    "LastGC",
-				MType: "gauge",
-				Value: new(float64),
-			},
-			body: Metrics{
-				ID:    "LastGC",
-				MType: "",
-				Value: new(float64),
-			},
-			contentType:    "application/json",
-			valueMetric:    1744184459,
-			wantStatusCode: http.StatusBadRequest,
-		},
-	}
-	for _, tt := range testsData {
-		t.Run(tt.nameT, func(t *testing.T) {
-
-			tt.metricsInit.Value = new(float64)
-			*tt.metricsInit.Value = tt.valueMetric
-			metricsHandler.Metrics.GaugeMetrics[tt.metricsInit.ID] = *tt.metricsInit.Value
-
-			rawData, err := json.Marshal(tt.body)
-			require.NoErrorf(t, err, "неожиданная ошибка сериализации <%v>", err)
-
-			txData := bytes.NewBuffer(rawData)
-
-			req := httptest.NewRequest(tt.methodT, tt.urlT, txData)
-			res := httptest.NewRecorder()
-
-			req.Header.Set("Content-Type", tt.contentType)
-
-			metricsHandler.MetricByJSON(res, req)
-			resp := res.Result()
-			defer func() {
-				err := resp.Body.Close()
-				assert.NoErrorf(t, err, "ошибка при закрытии потока {%v}", err)
-			}()
-
-			assert.Equalf(t, tt.wantStatusCode, resp.StatusCode, "ожидася код <%d>, а принят <%d>", tt.wantStatusCode, resp.StatusCode)
-		})
-	}
-}
-
-func Test_storageDBCounterMetrics_SUCCESS(t *testing.T) {
-
-	testsData := []struct {
-		nameTest string
-		name     string
-		value    int64
-		initMock func(mock sqlmock.Sqlmock)
-	}{
-		{
-			nameTest: "Корректные данные",
-			name:     "AAA",
-			value:    123,
-			initMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("AAA", 123).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-		},
-	}
-
-	for _, tt := range testsData {
-		t.Run(tt.nameTest, func(t *testing.T) {
-
-			db, mock, err := sqlmock.New()
-			require.NoError(t, err)
-			defer db.Close()
-
-			tt.initMock(mock)
-
-			err = storageDBCounterMetrics(db, tt.name, tt.value)
-			require.NoError(t, err)
-		})
-	}
-}
-
-func Test_storageDBCounterMetrics_FAULT(t *testing.T) {
-
-	testsData := []struct {
-		nameTest  string
-		usePtrDB  bool
-		name      string
-		value     int64
-		initMock  func(mock sqlmock.Sqlmock)
-		wantError string
-	}{
-		{
-			nameTest: "Нет указателя на БД",
-			usePtrDB: false,
-			name:     "AAA",
-			value:    123,
-			initMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("AAA", 123).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-			wantError: "ошибка сохранения метрики типа counter в БД. В аргументе db нет указателя на БД",
-		},
-		{
-			nameTest: "Нет имени метрики",
-			usePtrDB: true,
-			name:     "",
-			value:    123,
-			initMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("AAA", 123).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-			wantError: "ошибка сохранения метрики типа counter в БД. Принято пустое значение name аргумента",
-		},
-	}
-
-	for _, tt := range testsData {
-		t.Run(tt.nameTest, func(t *testing.T) {
-
-			db, mock, err := sqlmock.New()
-			require.NoError(t, err)
-			defer db.Close()
-
-			tt.initMock(mock)
-
-			ptrDB := db
-			if !tt.usePtrDB {
-				ptrDB = nil
-			}
-
-			err = storageDBCounterMetrics(ptrDB, tt.name, tt.value)
-			require.Equalf(t, tt.wantError, err.Error(), "ожидалась ошибка <%s>, а принято <%s>", tt.wantError, err.Error())
-		})
-	}
-}
-
-func Test_storageDBGaugeMetrics_SUCCESS(t *testing.T) {
-
-	testsData := []struct {
-		nameTest string
-		name     string
-		value    float64
-		initMock func(mock sqlmock.Sqlmock)
-	}{
-		{
-			nameTest: "Корректные данные",
-			name:     "AAA",
-			value:    123.4,
-			initMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("AAA", 123.4).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-		},
-	}
-
-	for _, tt := range testsData {
-		t.Run(tt.nameTest, func(t *testing.T) {
-
-			db, mock, err := sqlmock.New()
-			require.NoError(t, err)
-			defer db.Close()
-
-			tt.initMock(mock)
-
-			err = storageDBGaugeMetrics(db, tt.name, tt.value)
-			require.NoError(t, err)
-		})
-	}
-}
-
-func Test_storageDBGaugeMetrics_FAULT(t *testing.T) {
-
-	testsData := []struct {
-		nameTest  string
-		usePtrDB  bool
-		name      string
-		value     float64
-		initMock  func(mock sqlmock.Sqlmock)
-		wantError string
-	}{
-		{
-			nameTest: "Нет указателя на БД",
-			usePtrDB: false,
-			name:     "AAA",
-			value:    123,
-			initMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("AAA", 123).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-			wantError: "ошибка сохранения метрики типа gauge в БД. В аргументе db нет указателя на БД",
-		},
-		{
-			nameTest: "Нет имени метрики",
-			usePtrDB: true,
-			name:     "",
-			value:    123,
-			initMock: func(mock sqlmock.Sqlmock) {
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("AAA", 123).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-			},
-			wantError: "ошибка сохранения метрики типа gauge в БД. Принято пустое значение name аргумента",
-		},
-	}
-
-	for _, tt := range testsData {
-		t.Run(tt.nameTest, func(t *testing.T) {
-
-			db, mock, err := sqlmock.New()
-			require.NoError(t, err)
-			defer db.Close()
-
-			tt.initMock(mock)
-
-			ptrDB := db
-			if !tt.usePtrDB {
-				ptrDB = nil
-			}
-
-			err = storageDBGaugeMetrics(ptrDB, tt.name, tt.value)
-			require.Equalf(t, tt.wantError, err.Error(), "ожидалась ошибка <%s>, а принято <%s>", tt.wantError, err.Error())
-		})
-	}
+	// Запуск профилирования памяти в конце теста
+	closeFileMem := profile.Memory()
+	err := closeFileMem()
+	require.NoErrorf(b, err, "неожиданная ошибка при закрытии файла профилирования памяти: <%v>", err)
 }
