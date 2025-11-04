@@ -9,6 +9,7 @@ import (
 )
 
 func main() {
+
 	// Перехват паники.
 	defer func() {
 		if r := recover(); r != nil {
