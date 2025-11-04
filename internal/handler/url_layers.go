@@ -642,7 +642,7 @@ func internalDeleteUserURLsLayerRx(r *http.Request, logger *zap.Logger) (rxArr [
 	// Логика.
 	uuidRx = r.Header.Get("Authorization")
 
-	// Используем json.Decoder для поточной разбора.
+	// Применение json.Decoder для оптимизации.
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&rxArr); err != nil {
 		logger.Error("Ошибка сериализации данных",
