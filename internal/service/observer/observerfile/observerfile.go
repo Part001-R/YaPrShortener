@@ -10,13 +10,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Part001-R/YaPrShortener/internal/service/logger"
 	"github.com/Part001-R/YaPrShortener/internal/service/observer"
 	"go.uber.org/zap"
 )
 
 // Получение ID наблюдателя. Возвращается ID.
-func (of obsFile) GetID() string {
+func (of *obsFile) GetID() string {
 	return of.name
 }
 
@@ -25,11 +24,14 @@ func (of obsFile) GetID() string {
 // Параметры:
 //
 //	msg - сообщение оповещения.
-func (of obsFile) SendMsg(msg observer.AuditEvent) error {
+func (of *obsFile) SendMsg(msg observer.AuditEvent) error {
+
+	of.mtx.Lock()
+	defer of.mtx.Unlock()
 
 	file, err := os.OpenFile(of.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		logger.Log.Error("Ошибка открытия файла аудита", zap.Error(err))
+		of.log.Error("Ошибка открытия файла аудита", zap.Error(err))
 		return fmt.Errorf("ошибка открытия файла аудита: <%v>", err)
 	}
 	defer file.Close()
@@ -38,8 +40,8 @@ func (of obsFile) SendMsg(msg observer.AuditEvent) error {
 
 	data, err := json.Marshal(msg)
 	if err != nil {
-		logger.Log.Error("Ошибка json.Marshal", zap.Error(err))
-		return fmt.Errorf("оОшибка json.Marshal: <%v>", err)
+		of.log.Error("Ошибка json.Marshal", zap.Error(err))
+		return fmt.Errorf("ошибка json.Marshal: <%v>", err)
 	}
 	file.WriteString(string(data) + "\n")
 	return nil

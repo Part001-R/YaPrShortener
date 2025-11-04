@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,13 +21,16 @@ import (
 	"go.uber.org/zap"
 )
 
+// Параметры сервиса.
 type paramsURL struct {
 	flags            config.Config
 	closeConDB       func()
 	storageLongShort handler.Actions
 	shortLongDB      *handler.ShortLongDB
+	log              *zap.Logger
 }
 
+// Для представления информации по причине остоновки сервиса.
 type checkReasonStop struct {
 	chSrvErr     chan error
 	chStorageErr chan error
@@ -62,13 +64,13 @@ func prepare() (*paramsURL, error) {
 	flags := config.ParseFlags()
 
 	// Логгер.
-	err := logger.Initialize(flags.LogLevel)
+	log, err := logger.NewLogger(flags.LogLevel)
 	if err != nil {
 		return &paramsURL{}, fmt.Errorf("ошибка в prepare: функия Initialize вернула ошибку -> <%w>", err)
 	}
 
 	// Наблюдатели.
-	observer, err := prepareObserver(flags)
+	observer, err := prepareObserver(flags, log)
 	if err != nil {
 		return &paramsURL{}, fmt.Errorf("ошибка в prepare: функия prepareObserver вернула ошибку -> <%w>", err)
 	}
@@ -79,12 +81,12 @@ func prepare() (*paramsURL, error) {
 
 	if flags.DSNDB != "" {
 
-		dbPtr, funcCloseDB, err = db.ConnectDB(flags.DSNDB)
+		dbPtr, funcCloseDB, err = db.ConnectDB(flags.DSNDB, log)
 		if err != nil {
 			return &paramsURL{}, fmt.Errorf("ошибка в prepare: функия db.ConnectDB вернула ошибку -> <%w>", err)
 		}
 
-		err = db.MigrationUpDB(dbPtr)
+		err = db.MigrationUpDB(dbPtr, log)
 		if err != nil {
 			return &paramsURL{}, fmt.Errorf("ошибка в prepare: функия db.MigrationUpDB вернула ошибку -> <%w>", err)
 		}
@@ -94,7 +96,7 @@ func prepare() (*paramsURL, error) {
 	shortLong := handler.NewShortenerMemory()
 	shortLongDB := handler.NewShortenerDB(dbPtr)
 
-	storageLongShort := handler.NewShortener(shortLong, shortLongDB, flags, observer)
+	storageLongShort := handler.NewShortener(shortLong, shortLongDB, flags, observer, log)
 	err = storageLongShort.LoadFileURL()
 	if err != nil {
 		return &paramsURL{}, fmt.Errorf("ошибка в prepare: функция storageLongShort.LoadFileURL вернула ошибку -> <%w>", err)
@@ -106,6 +108,7 @@ func prepare() (*paramsURL, error) {
 		closeConDB:       funcCloseDB,
 		storageLongShort: storageLongShort,
 		shortLongDB:      shortLongDB,
+		log:              log,
 	}, nil
 }
 
@@ -144,7 +147,8 @@ func server(params *paramsURL) error {
 //
 //	srv - настройки сервера.
 //	txErr - канал для возврата ошибки.
-func startUpHTTPServer(srv *http.Server, txErr chan error) {
+//	log - логгер.
+func startUpHTTPServer(srv *http.Server, txErr chan error, log *zap.Logger) {
 
 	// Проверка параметров.
 	if srv == nil {
@@ -156,11 +160,11 @@ func startUpHTTPServer(srv *http.Server, txErr chan error) {
 		return
 	}
 
-	logger.Log.Info("Запуск сервера", zap.String("address", srv.Addr))
+	log.Info("Запуск сервера", zap.String("address", srv.Addr))
 
 	err := srv.ListenAndServe()
 	if err != nil && err != http.ErrServerClosed {
-		logger.Log.Error("Ошибка при запуске сервера", zap.Error(err))
+		log.Error("Ошибка при запуске сервера", zap.Error(err))
 	}
 	txErr <- err
 }
@@ -169,8 +173,9 @@ func startUpHTTPServer(srv *http.Server, txErr chan error) {
 //
 // Параметры:
 //
-//	data - набор данных для обеспечения работы функции.
-func signalsStopRun(data *checkReasonStop) error {
+//		data - набор данных для обеспечения работы функции.
+//	 log - логгер.
+func signalsStopRun(data *checkReasonStop, log *zap.Logger) error {
 
 	// Отложенное закрытие базы данных.
 	defer func() {
@@ -202,13 +207,13 @@ func signalsStopRun(data *checkReasonStop) error {
 	// Логика.
 	select {
 	case <-data.sigSys:
-		logger.Log.Info("сервер остановлен штатно", zap.String("address", data.srvConf.Addr))
+		log.Info("сервер остановлен штатно", zap.String("address", data.srvConf.Addr))
 		return nil
 	case err := <-data.chSrvErr:
-		logger.Log.Error("ошибка сервера", zap.String("address", data.srvConf.Addr), zap.String("ошибка", err.Error()))
+		log.Error("ошибка сервера", zap.String("address", data.srvConf.Addr), zap.String("ошибка", err.Error()))
 		return err
 	case err := <-data.chStorageErr:
-		logger.Log.Error("ошибка периодического сохранения метрик в файл", zap.String("address", data.srvConf.Addr), zap.String("ошибка", err.Error()))
+		log.Error("ошибка периодического сохранения метрик в файл", zap.String("address", data.srvConf.Addr), zap.String("ошибка", err.Error()))
 		return err
 	}
 }
@@ -250,13 +255,13 @@ func actions(params *paramsURL, cr *chi.Mux) error {
 	}
 
 	// Запуск сервера.
-	go startUpHTTPServer(srvConf, chSrvErr)
+	go startUpHTTPServer(srvConf, chSrvErr, params.log)
 
 	// Запуск обработчика асинхронной очистки таблицы shortener БД.
-	go asynClearShortenerTableDB(params.shortLongDB.Ptr, params.shortLongDB.ChForDelete, params.shortLongDB.ChDoDelete)
+	go asynClearShortenerTableDB(params.shortLongDB.Ptr, params.shortLongDB.ChForDelete, params.shortLongDB.ChDoDelete, params.log)
 
 	// Приём сигналов остановки.
-	err := signalsStopRun(data)
+	err := signalsStopRun(data, params.log)
 	if err != nil {
 		return fmt.Errorf("функция signalsStopRun вернула ошибку: <%w>", err)
 	}
@@ -307,10 +312,11 @@ func handlersShortener(cr *chi.Mux, p *paramsURL) error {
 //
 // Параметры:
 //
-//	db - указатель на БД.
-//	rxChForDelete - канал для приёма информации по удаляемой строке.
-//	rxChDoDelete - канал для приёма признака завершения накопления и запуска очистки таблицы.
-func asynClearShortenerTableDB(db *sql.DB, rxChForDelete chan handler.DeleteDB, rxChDoDelete chan struct{}) {
+//		db - указатель на БД.
+//		rxChForDelete - канал для приёма информации по удаляемой строке.
+//		rxChDoDelete - канал для приёма признака завершения накопления и запуска очистки таблицы.
+//	 log - логгер.
+func asynClearShortenerTableDB(db *sql.DB, rxChForDelete chan handler.DeleteDB, rxChDoDelete chan struct{}, log *zap.Logger) {
 
 	rxMarkData := make([]handler.DeleteDB, 0)
 
@@ -318,7 +324,7 @@ func asynClearShortenerTableDB(db *sql.DB, rxChForDelete chan handler.DeleteDB, 
 		select {
 		case deleteData, ok := <-rxChForDelete: // Накопление данных для удаления.
 			if !ok {
-				logger.Log.Error("Ошибка при получении данных из канала. Канал закрыт")
+				log.Error("Ошибка при получении данных из канала. Канал закрыт")
 				return
 			}
 			rxMarkData = append(rxMarkData, deleteData)
@@ -334,7 +340,7 @@ func asynClearShortenerTableDB(db *sql.DB, rxChForDelete chan handler.DeleteDB, 
 
 					result, err := db.Exec(query, data.Short, data.UUID)
 					if err != nil {
-						logger.Log.Error("Ошибка при удалении данных",
+						log.Error("Ошибка при удалении данных",
 							zap.Error(err),
 							zap.String("short", data.Short),
 						)
@@ -342,7 +348,7 @@ func asynClearShortenerTableDB(db *sql.DB, rxChForDelete chan handler.DeleteDB, 
 					}
 					numb, err := result.RowsAffected()
 					if err != nil {
-						logger.Log.Error("Ошибка при получении номера строки после удаления",
+						log.Error("Ошибка при получении номера строки после удаления",
 							zap.Error(err),
 							zap.String("short", data.Short),
 						)
@@ -355,7 +361,7 @@ func asynClearShortenerTableDB(db *sql.DB, rxChForDelete chan handler.DeleteDB, 
 				// Очистка накопления.
 				rxMarkData = make([]handler.DeleteDB, 0)
 
-				logger.Log.Info("Очистка таблицы shortener завершена",
+				log.Info("Очистка таблицы shortener завершена",
 					zap.String("удалено строк", fmt.Sprintf("%d", cnt)),
 				)
 			}
@@ -368,15 +374,16 @@ func asynClearShortenerTableDB(db *sql.DB, rxChForDelete chan handler.DeleteDB, 
 // Параметры:
 //
 //	flags - флаги.
-func prepareObserver(flags config.Config) (observer.Action, error) {
+//	log - логгер.
+func prepareObserver(flags config.Config, log *zap.Logger) (observer.Action, error) {
 
-	obsSrc := observer.NewObserver()
+	obsSrc := observer.NewObserver(log)
 
 	// Добавление аудитора - файл.
 	if flags.AuditFile != "" {
 		name := "file"
 
-		obsFile := observerfile.NewObserverFile(name, flags.AuditFile)
+		obsFile := observerfile.NewObserverFile(name, flags.AuditFile, log)
 		obsSrc.RegistrationObserver(obsFile)
 	}
 

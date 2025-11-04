@@ -12,7 +12,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Part001-R/YaPrShortener/internal/service/logger"
 	_ "github.com/lib/pq"
 	"github.com/pressly/goose"
 	"go.uber.org/zap"
@@ -24,8 +23,9 @@ const head = "YaPrShortener"
 //
 // Параметры:
 //
-//	db - указатель на БД.
-func MigrationUpDB(db *sql.DB) error {
+//		db - указатель на БД.
+//	 log - логгер.
+func MigrationUpDB(db *sql.DB, log *zap.Logger) error {
 
 	// Определение рабочей директории.
 	path, err := workDir()
@@ -52,7 +52,7 @@ func MigrationUpDB(db *sql.DB) error {
 	// Применение миграций.
 	err = goose.Up(db, pathFilesMigration)
 	if err != nil {
-		logger.Log.Error("Ошибка применения миграции БД",
+		log.Error("Ошибка применения миграции БД",
 			zap.Error(err),
 		)
 		return fmt.Errorf("ошибка мри миграции БД")
@@ -96,7 +96,8 @@ func workDir() (string, error) {
 // Параметры:
 //
 //	dsn - строка подключения к БД.
-func ConnectDB(dsn string) (*sql.DB, func(), error) {
+//	log - логгер.
+func ConnectDB(dsn string, log *zap.Logger) (*sql.DB, func(), error) {
 
 	// Проверка аргументов.
 	if dsn == "" {
@@ -106,20 +107,20 @@ func ConnectDB(dsn string) (*sql.DB, func(), error) {
 	// Подключение к БД.
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
-		logger.Log.Error("Ошибка при подключении к БД", zap.Error(err))
+		log.Error("Ошибка при подключении к БД", zap.Error(err))
 		return nil, nil, fmt.Errorf("ошибка подключения к БД:<%v>", err)
 	}
 
 	// Ping.
 	if err := db.Ping(); err != nil {
-		logger.Log.Error("Ошибка Ping после подключения к БД", zap.Error(err))
+		log.Error("Ошибка Ping после подключения к БД", zap.Error(err))
 		return nil, nil, fmt.Errorf("ошибка ping после подключения к БД:<%v>", err)
 	}
 
 	// Функция, для закрытия подключения к БД.
 	closeDB := func() {
 		if err := db.Close(); err != nil {
-			logger.Log.Error("Ошибка при закрытии подключения к БД", zap.Error(err))
+			log.Error("Ошибка при закрытии подключения к БД", zap.Error(err))
 		}
 	}
 

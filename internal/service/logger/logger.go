@@ -8,18 +8,18 @@ import (
 	"go.uber.org/zap"
 )
 
-// Глобальный логгер.
-var Log *zap.Logger = zap.NewNop()
+// Экземпляр логгера.
+var log *zap.Logger = zap.NewNop()
 
 // Обеспечение единоразовой инициализации.
 var once sync.Once
 
-// Initialize инициализирует логгер. Возвращается ошибка.
+// NewLogger инициализирует логгер. Возвращается логгер и ошибка.
 //
 // Параметры:
 //
 //	level - уровень логирования.
-func Initialize(level string) error {
+func NewLogger(level string) (*zap.Logger, error) {
 
 	var initErr error
 
@@ -41,8 +41,11 @@ func Initialize(level string) error {
 			return
 		}
 		// Устанавливаем синглтон.
-		Log = zl
+		log = zl
 	})
 
-	return initErr
+	if initErr != nil {
+		return nil, initErr
+	}
+	return log, nil
 }

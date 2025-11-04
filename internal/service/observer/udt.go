@@ -2,7 +2,11 @@
 // Содержит конструктор - NewObserver.
 package observer
 
-import "sync"
+import (
+	"sync"
+
+	"go.uber.org/zap"
+)
 
 // Сообщение аудита.
 type AuditEvent struct {
@@ -16,6 +20,7 @@ type AuditEvent struct {
 type source struct {
 	obs map[string]ActionsObservers
 	mtx sync.RWMutex
+	log *zap.Logger
 }
 
 // Интерфейс для взаимодействия с пакетом.
@@ -32,9 +37,13 @@ var obsSrc *source
 var once sync.Once
 
 // Конструктор.
-func NewObserver() Action {
+func NewObserver(log *zap.Logger) Action {
 	once.Do(func() {
-		obsSrc = &source{}
+		obsSrc = &source{
+			obs: map[string]ActionsObservers{},
+			mtx: sync.RWMutex{},
+			log: log,
+		}
 	})
 
 	return obsSrc

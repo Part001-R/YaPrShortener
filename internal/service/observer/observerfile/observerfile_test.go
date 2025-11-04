@@ -99,7 +99,7 @@ func Test_GetID_SUCCESS(t *testing.T) {
 
 	filePath := "./foo.json"
 	fileName := "file.txt"
-	obsFile := NewObserverFile(fileName, filePath)
+	obsFile := NewObserverFile(fileName, filePath, nil)
 
 	rxName := obsFile.GetID()
 	require.Equalf(t, fileName, rxName, "ожидалось <%s>, а принято <%s>", fileName, rxName)

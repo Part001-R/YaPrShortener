@@ -8,7 +8,6 @@ package observer
 import (
 	"encoding/json"
 
-	"github.com/Part001-R/YaPrShortener/internal/service/logger"
 	"go.uber.org/zap"
 )
 
@@ -25,7 +24,7 @@ func (s *source) RegistrationObserver(o ActionsObservers) {
 		s.obs = make(map[string]ActionsObservers)
 	}
 	s.obs[o.GetID()] = o
-	logger.Log.Info("Зарегистрирован наблюдатель", zap.String("obsID", o.GetID()))
+	s.log.Info("Зарегистрирован наблюдатель", zap.String("obsID", o.GetID()))
 }
 
 // UnRegistrationObserver удаляет наблюдателя.
@@ -38,7 +37,7 @@ func (s *source) UnRegistrationObserver(o ActionsObservers) {
 	defer s.mtx.RUnlock()
 
 	delete(s.obs, o.GetID())
-	logger.Log.Info("Удалён наблюдатель", zap.String("obsID", o.GetID()))
+	s.log.Info("Удалён наблюдатель", zap.String("obsID", o.GetID()))
 }
 
 // Notify вызов оповещений наблюдателей.
@@ -56,19 +55,19 @@ func (s *source) Notify(msg AuditEvent) {
 
 			jsonData, jsonErr := json.Marshal(msg)
 			if jsonErr != nil {
-				logger.Log.Error("ошибка json.Marshal",
+				s.log.Error("ошибка json.Marshal",
 					zap.Error(jsonErr),
 				)
 				continue
 			}
 
-			logger.Log.Error("ошибка оповещения наблюдателя",
+			s.log.Error("ошибка оповещения наблюдателя",
 				zap.String("obsID", os.GetID()),
 				zap.Error(err),
 				zap.String("msg", string(jsonData)),
 			)
 			continue
 		}
-		logger.Log.Info("Наблюдателю передано оповещение", zap.String("obsID", os.GetID()))
+		s.log.Info("Наблюдателю передано оповещение", zap.String("obsID", os.GetID()))
 	}
 }

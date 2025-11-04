@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Part001-R/YaPrShortener/internal/service/logger"
 	"github.com/Part001-R/YaPrShortener/internal/service/observer"
 	"github.com/Part001-R/YaPrShortener/internal/service/observer/observerfile"
 	"github.com/Part001-R/YaPrShortener/internal/service/observer/observerurl"
@@ -17,17 +18,20 @@ import (
 // Test_RegistrationObserver_SUCCESS тест добавления наблюдателя.
 func Test_RegistrationObserver_SUCCESS(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	// Наблюдатели.
 	obsFileID := "file"
 	obsFilePath := "./foo.json"
-	obsFile := observerfile.NewObserverFile(obsFileID, obsFilePath)
+	obsFile := observerfile.NewObserverFile(obsFileID, obsFilePath, nil)
 
 	obsHTTPID := "HTTP"
 	obsHTTPURL := "http://foo.bar"
 	obsURL := observerurl.NewObserverURL(obsHTTPID, obsHTTPURL)
 
 	// Источник.
-	obsSrc := observer.NewObserver()
+	obsSrc := observer.NewObserver(log)
 
 	// Регистрация наблюдателей.
 	obsSrc.RegistrationObserver(obsFile)
@@ -44,13 +48,16 @@ func Test_RegistrationObserver_SUCCESS(t *testing.T) {
 // Test_UnRegistrationObserver_SUCCESS тест удаления наблюдателя.
 func Test_UnRegistrationObserver_SUCCESS(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	// Наблюдатели.
 	obsFileID := "file"
 	obsFilePath := "./foo.json"
-	obsFile := observerfile.NewObserverFile(obsFileID, obsFilePath)
+	obsFile := observerfile.NewObserverFile(obsFileID, obsFilePath, nil)
 
 	// Источник.
-	obsSrc := observer.NewObserver()
+	obsSrc := observer.NewObserver(log)
 
 	// Регистрация наблюдателей.
 	obsSrc.RegistrationObserver(obsFile)
@@ -114,13 +121,16 @@ func Test_UnRegistrationObserver_SUCCESS(t *testing.T) {
 // Test_Notify_SUCCESS тест оповещения наблюдателей.
 func Test_Notify_SUCCESS(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	// Наблюдатели.
 	obsFileID := "file"
 	obsFilePath := "./foo.json"
-	obsFile := observerfile.NewObserverFile(obsFileID, obsFilePath)
+	obsFile := observerfile.NewObserverFile(obsFileID, obsFilePath, nil)
 
 	// Источник.
-	obsSrc := observer.NewObserver()
+	obsSrc := observer.NewObserver(log)
 
 	// Регистрация наблюдателей.
 	obsSrc.RegistrationObserver(obsFile)

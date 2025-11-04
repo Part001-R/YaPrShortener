@@ -14,12 +14,16 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Part001-R/YaPrShortener/internal/profile"
+	"github.com/Part001-R/YaPrShortener/internal/service/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // internalShortURLFromLong.
 func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
+
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
 
 	conf := &ShortLong{
 		List: &ShortLongURL{
@@ -32,6 +36,7 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	testData := []struct {
@@ -151,6 +156,9 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 
 func Test_internalShortURLFromLong_FAULT(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	conf := &ShortLong{
 		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
@@ -160,6 +168,7 @@ func Test_internalShortURLFromLong_FAULT(t *testing.T) {
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	testData := []struct {
@@ -236,6 +245,9 @@ func Test_internalShortURLFromLong_FAULT(t *testing.T) {
 // internalShortURLFromLongJSON.
 func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	conf := &ShortLong{
 		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
@@ -246,6 +258,7 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	testData := []struct {
@@ -366,6 +379,9 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 
 func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	conf := &ShortLong{
 		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
@@ -376,6 +392,7 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	testData := []struct {
@@ -471,6 +488,9 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 // internalLongURLFromShort.
 func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	conf := &ShortLong{
 		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
@@ -481,6 +501,7 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	// Подготовка памы
@@ -586,6 +607,9 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 
 func Test_internalLongURLFromShort_FAULT(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	conf := &ShortLong{
 		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
@@ -595,6 +619,7 @@ func Test_internalLongURLFromShort_FAULT(t *testing.T) {
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	// Данные для теста
@@ -667,12 +692,16 @@ func Test_internalLongURLFromShort_FAULT(t *testing.T) {
 // LoadFileURL.
 func Test_LoadFileURL_SUCCESS(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	shortLong := NewShortenerMemory()
 	shortLongHandler := &ShortLong{
 		List:             shortLong,
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	testData := struct {
@@ -723,6 +752,9 @@ func Test_LoadFileURL_SUCCESS(t *testing.T) {
 
 func Test_LoadFileURL_FAULT(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	testData := []struct {
 		nameT         string
 		mapsShortLong *ShortLong
@@ -739,6 +771,7 @@ func Test_LoadFileURL_FAULT(t *testing.T) {
 				BaseAddrShortURL: ":8080/",
 				ServerAddr:       ":8080",
 				FileStoragePath:  "",
+				Log:              log,
 			},
 			wantError: "принят пустой путь к файлу хранения",
 		},
@@ -753,6 +786,7 @@ func Test_LoadFileURL_FAULT(t *testing.T) {
 				BaseAddrShortURL: ":8080/",
 				ServerAddr:       ":8080",
 				FileStoragePath:  "test.json",
+				Log:              log,
 			},
 			wantError: "нет указателя на ShortByLong",
 		},
@@ -767,6 +801,7 @@ func Test_LoadFileURL_FAULT(t *testing.T) {
 				BaseAddrShortURL: ":8080/",
 				ServerAddr:       ":8080",
 				FileStoragePath:  "test.json",
+				Log:              log,
 			},
 			wantError: "нет указателя на LongByShort",
 		},
@@ -1166,6 +1201,9 @@ func Test_storageBatchMap_FAULT(t *testing.T) {
 // workWithRxData.
 func Test_workWithRxData_SUCCESS(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	conf := &ShortLong{
 		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
@@ -1176,6 +1214,7 @@ func Test_workWithRxData_SUCCESS(t *testing.T) {
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	// Подготовка данных для тестов
@@ -1267,6 +1306,10 @@ func Test_workWithRxData_SUCCESS(t *testing.T) {
 }
 
 func Test_workWithRxData_FAULT(t *testing.T) {
+
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	conf := &ShortLong{
 		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
@@ -1277,6 +1320,7 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	testsData := []struct {
@@ -1334,6 +1378,9 @@ func Test_workWithRxData_FAULT(t *testing.T) {
 // Middleware.
 func Test_Middleware_SUCCESS(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	// Конфигурация
 	conf := &ShortLong{
 		List: &ShortLongURL{
@@ -1345,6 +1392,7 @@ func Test_Middleware_SUCCESS(t *testing.T) {
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	// Обработчик для теста Middleware
@@ -1400,6 +1448,9 @@ func Test_Middleware_SUCCESS(t *testing.T) {
 
 func Test_Middleware_FAULT(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	// Конфигурация
 	conf := &ShortLong{
 		List: &ShortLongURL{
@@ -1411,6 +1462,7 @@ func Test_Middleware_FAULT(t *testing.T) {
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	// Обработчик для теста Middleware
@@ -1465,6 +1517,9 @@ func Test_Middleware_FAULT(t *testing.T) {
 // internalShortURLFromLongBatch.
 func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	// Конфигурация
 	conf := &ShortLong{
 		List: &ShortLongURL{
@@ -1476,6 +1531,7 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	// Данные для тестов
@@ -1610,6 +1666,9 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 
 func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	conf := &ShortLong{
 		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
@@ -1619,6 +1678,7 @@ func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	testData := []struct {
@@ -1709,6 +1769,9 @@ func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 // InternalDeleteUserURLs.
 func Test_InternalDeleteUserURLs_SUCCESS(t *testing.T) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	conf := &ShortLong{
 		List: &ShortLongURL{
 			ShorByLong:  make(map[string]string),
@@ -1719,6 +1782,7 @@ func Test_InternalDeleteUserURLs_SUCCESS(t *testing.T) {
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	// Данные для тестов
@@ -1796,6 +1860,9 @@ func Test_InternalDeleteUserURLs_SUCCESS(t *testing.T) {
 
 func Benchmark_InternalDeleteUserURLs_SUCCESS(b *testing.B) {
 
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(b, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
 	// Подготовка конфигурации
 	conf := &ShortLong{
 		List: &ShortLongURL{
@@ -1807,6 +1874,7 @@ func Benchmark_InternalDeleteUserURLs_SUCCESS(b *testing.B) {
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
+		Log:              log,
 	}
 
 	// Данные для тестов
@@ -1879,6 +1947,6 @@ func Benchmark_InternalDeleteUserURLs_SUCCESS(b *testing.B) {
 	}
 	// Запуск профилирования памяти в конце теста
 	closeFileMem := profile.Memory()
-	err := closeFileMem()
+	err = closeFileMem()
 	require.NoErrorf(b, err, "неожиданная ошибка при закрытии файла профилирования памяти: <%v>", err)
 }
