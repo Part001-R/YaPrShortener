@@ -1,27 +1,51 @@
+// logger пакет.
+// Функция Initialize, реализует создание экземпляра.
 package logger
 
 import (
+	"sync"
+
 	"go.uber.org/zap"
 )
 
-var Log *zap.Logger = zap.NewNop()
+// Экземпляр логгера.
+var log *zap.Logger = zap.NewNop()
 
-func Initialize(level string) error {
-	// преобразуем текстовый уровень логирования в zap.AtomicLevel
-	lvl, err := zap.ParseAtomicLevel(level)
-	if err != nil {
-		return err
+// Обеспечение единоразовой инициализации.
+var once sync.Once
+
+// NewLogger инициализирует логгер. Возвращается логгер и ошибка.
+//
+// Параметры:
+//
+//	level - уровень логирования.
+func NewLogger(level string) (*zap.Logger, error) {
+
+	var initErr error
+
+	once.Do(func() {
+		// Преобразуем текстовый уровень логирования в zap.AtomicLevel.
+		lvl, err := zap.ParseAtomicLevel(level)
+		if err != nil {
+			initErr = err
+			return
+		}
+		// Создаем новую конфигурацию логера.
+		cfg := zap.NewProductionConfig()
+		// Устанавливаем уровень.
+		cfg.Level = lvl
+		// Создаем логер на основе конфигурации.
+		zl, err := cfg.Build()
+		if err != nil {
+			initErr = err
+			return
+		}
+		// Устанавливаем синглтон.
+		log = zl
+	})
+
+	if initErr != nil {
+		return nil, initErr
 	}
-	// создаём новую конфигурацию логера
-	cfg := zap.NewProductionConfig()
-	// устанавливаем уровень
-	cfg.Level = lvl
-	// создаём логер на основе конфигурации
-	zl, err := cfg.Build()
-	if err != nil {
-		return err
-	}
-	// устанавливаем синглтон
-	Log = zl
-	return nil
+	return log, nil
 }

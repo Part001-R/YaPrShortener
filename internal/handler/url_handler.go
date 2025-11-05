@@ -1,6 +1,9 @@
+// handler пакет. Секция с обработчиками контроллера HTTP.
+// Содержит конструкторы.
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -11,75 +14,92 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/Part001-R/YaPrShortener/internal/config/config"
+	"github.com/Part001-R/YaPrShortener/internal/service/flags"
 	gz "github.com/Part001-R/YaPrShortener/internal/service/gzip"
-	"github.com/Part001-R/YaPrShortener/internal/service/logger"
+	"github.com/Part001-R/YaPrShortener/internal/service/observer"
 	_ "github.com/lib/pq"
 	"go.uber.org/zap"
 )
 
-// Для передачи в Go асинхронной очистки БД
-type DeleteDBT struct {
+const (
+	shorten = "shorten"
+	follow  = "follow"
+)
+
+// Для передачи в Go асинхронной очистки БД.
+type DeleteDB struct {
 	Short string
 	UUID  string
 }
 
-type ShortLongURLT struct {
+// Для хранения в памяти.
+type ShortLongURL struct {
 	ShorByLong  map[string]string
 	LongByShort map[string]string
-	Mu          sync.RWMutex
+	mu          sync.RWMutex
 }
 
-type ShortLongDBT struct {
+// Для взаимодействия с БД.
+type ShortLongDB struct {
 	Ptr         *sql.DB
-	Mu          sync.RWMutex
-	ChForDelete chan DeleteDBT
+	mu          sync.RWMutex
+	ChForDelete chan DeleteDB
 	ChDoDelete  chan struct{}
 }
 
-type ShortLongT struct {
-	List             *ShortLongURLT
-	DB               *ShortLongDBT
+// Сервис сокращения ссылок.
+type ShortLong struct {
+	List             *ShortLongURL
+	DB               *ShortLongDB
+	Observer         observer.Action
 	BaseAddrShortURL string
 	ServerAddr       string
 	FileStoragePath  string
+	Log              *zap.Logger
 }
 
-type EventURLT struct {
+// Для передачи содержимого файла в память.
+type EventURL struct {
 	UUID        string `json:"uuid"`
 	ShortURL    string `json:"short_url"`
 	OriginalURL string `json:"original_url"`
 }
 
-type rxLongURLT struct {
+// Для длинного представления URL.
+type rxLongURL struct {
 	URL string `json:"url"`
 }
 
-type txShortURLT struct {
+// Для короткого представления URL.
+type txShortURL struct {
 	Result string `json:"result"`
 }
 
-type rxLongURLBatchT struct {
+// Для приёма длинного представления URL и ID.
+type rxLongURLBatch struct {
 	CorrelationID string `json:"correlation_id"`
 	OriginalURL   string `json:"original_url"`
 }
 
-type txShortURLBatchT struct {
+// Для передачи сокращённого URL с ID.
+type txShortURLBatch struct {
 	CorrelationID string `json:"correlation_id"`
 	ShortURL      string `json:"short_url"`
 }
 
-type txShortURLOriginalURLT struct { // дополнительная реализация из файла теста 9
+// Для передачи длинного URL с ID.
+type txShortURLOriginalURL struct {
 	ShortURL    string `json:"short_url"`
 	OriginalURL string `json:"original_url"`
 }
 
-type handlersI interface {
+type handlers interface {
 	ShortURLFromLong(w http.ResponseWriter, r *http.Request)
 	LongURLFromShort(w http.ResponseWriter, r *http.Request)
 	ShortURLFromLongJSON(w http.ResponseWriter, r *http.Request)
@@ -88,167 +108,29 @@ type handlersI interface {
 	DeleteUserURLs(w http.ResponseWriter, r *http.Request)
 }
 
-type systemActI interface {
+type systemAct interface {
 	PingDB(w http.ResponseWriter, r *http.Request)
 }
 
-type fileI interface {
+type file interface {
 	LoadFileURL() error
 }
 
-// основной интерфейс
-type ShortLongI interface {
-	systemActI
-	handlersI
-	fileI
+type middleware interface {
+	Middleware(h http.Handler) http.Handler
+	MiddlewareAudit(h http.Handler) http.Handler
 }
 
-func NewShortLongURL() *ShortLongURLT {
-	return &ShortLongURLT{
-		ShorByLong:  make(map[string]string),
-		LongByShort: make(map[string]string),
-		Mu:          sync.RWMutex{},
-	}
+// Основной интерфейс.
+type Actions interface {
+	middleware
+	systemAct
+	handlers
+	file
 }
 
-func NewShortLongURLDB(db *sql.DB) *ShortLongDBT {
-	return &ShortLongDBT{
-		Ptr:         db,
-		Mu:          sync.RWMutex{},
-		ChForDelete: make(chan DeleteDBT),
-		ChDoDelete:  make(chan struct{}),
-	}
-}
-
-func NewShortLongStorage(storage *ShortLongURLT, db *ShortLongDBT, Fl config.ConfigT) ShortLongI {
-	return &ShortLongT{
-		List:             storage,
-		DB:               db,
-		BaseAddrShortURL: Fl.BaseAddrShortURL,
-		ServerAddr:       Fl.ServerAddr,
-		FileStoragePath:  Fl.FileStoragePath,
-	}
-}
-
-func (sl *ShortLongT) ShortURLFromLong(w http.ResponseWriter, r *http.Request) {
-
-	sl.List.Mu.RLock()
-	defer sl.List.Mu.RUnlock()
-
-	sl.BaseAddrShortURL = strings.TrimSuffix(sl.BaseAddrShortURL, "/")
-	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
-
-	// Вся логика обработчика
-	internalShortURLFromLong(sl.DB.Ptr, sl, w, r)
-}
-
-func (sl *ShortLongT) ShortURLFromLongBatch(w http.ResponseWriter, r *http.Request) {
-
-	sl.DB.Mu.RLock()
-	defer sl.DB.Mu.RUnlock()
-
-	sl.BaseAddrShortURL = strings.TrimSuffix(sl.BaseAddrShortURL, "/")
-	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
-
-	// Вся логика обработчика
-	internalShortURLFromLongBatch(sl.DB.Ptr, sl, w, r)
-}
-
-func (sl *ShortLongT) LongURLFromShort(w http.ResponseWriter, r *http.Request) {
-
-	sl.List.Mu.RLock()
-	defer sl.List.Mu.RUnlock()
-
-	internalLongURLFromShort(sl.DB.Ptr, sl, w, r)
-}
-
-func (sl *ShortLongT) ShortURLFromLongJSON(w http.ResponseWriter, r *http.Request) {
-
-	sl.List.Mu.RLock()
-	defer sl.List.Mu.RUnlock()
-
-	sl.BaseAddrShortURL = strings.TrimSuffix(sl.BaseAddrShortURL, "/")
-	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
-
-	// Вся логика обработчика
-	internalShortURLFromLongJSON(sl.DB.Ptr, sl, w, r)
-}
-
-func (sl *ShortLongT) LoadFileURL() error {
-
-	sl.List.Mu.RLock()
-	defer sl.List.Mu.RUnlock()
-
-	// Проверка
-	if sl.FileStoragePath == "" {
-		return errors.New("принят пустой путь к файлу хранения")
-	}
-	if sl.List.ShorByLong == nil {
-		return errors.New("нет указателя на ShortByLong")
-	}
-	if sl.List.LongByShort == nil {
-		return errors.New("нет указателя на LongByShort")
-	}
-
-	// Файл
-	file, err := os.OpenFile(sl.FileStoragePath, os.O_RDONLY|os.O_CREATE, 0644)
-	if err != nil {
-		return fmt.Errorf("ошибка открытия файла <%s>: %v", sl.FileStoragePath, err)
-	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			logger.Log.Error("Ошибка при закрытии подключения к файлу",
-				zap.Error(err),
-			)
-		}
-	}()
-
-	fi, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("ошибка получения статуса файла: %v", err)
-	}
-	if fi.Size() == 0 {
-		return nil
-	}
-
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return fmt.Errorf("ошибка чтения файла: %v", err)
-	}
-
-	// Мапы
-	var events []EventURLT
-	if err := json.Unmarshal(data, &events); err != nil {
-		return fmt.Errorf("ошибка Unmarshal: %v", err)
-	}
-
-	for _, ev := range events {
-		sl.List.ShorByLong[ev.OriginalURL] = ev.ShortURL
-		sl.List.LongByShort[ev.ShortURL] = ev.OriginalURL
-	}
-
-	return nil
-}
-
-func (sl *ShortLongT) PingDB(w http.ResponseWriter, r *http.Request) {
-
-	// Пинг
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-	if err := sl.DB.Ptr.PingContext(ctx); err != nil {
-		logger.Log.Error("Ошибка выполнения ping БД",
-			zap.Error(err),
-			zap.String("method", r.Method),
-			zap.String("url", r.URL.String()),
-		)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-}
-
-func Middleware(h http.HandlerFunc) http.HandlerFunc {
+// Реализация проверки кодировки и формирование длительности выполнения обработчика запроса.
+func (sl *ShortLong) Middleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ow := w
 
@@ -268,13 +150,12 @@ func Middleware(h http.HandlerFunc) http.HandlerFunc {
 					ow = cw
 					defer func() {
 						if err := cw.Close(); err != nil {
-							logger.Log.Error("Ошибка при закрытии cw", zap.Error(err))
+							sl.Log.Error("Ошибка при закрытии cw", zap.Error(err))
 						}
 					}()
 					found = true
 				case "identity":
 					found = true
-				default:
 				}
 			}
 
@@ -298,22 +179,18 @@ func Middleware(h http.HandlerFunc) http.HandlerFunc {
 				case "gzip":
 					cr, err := gz.NewCompressReader(r.Body)
 					if err != nil {
-						logger.Log.Error("Ошибка в NewCompressReader",
-							zap.Error(err),
-							zap.String("method", r.Method),
-							zap.String("url", r.URL.String()),
-						)
+						sl.Log.Error("Ошибка в NewCompressReader", zap.Error(err))
 						http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 						return
 					}
 					defer func() {
 						if err := cr.Close(); err != nil {
-							logger.Log.Error("Ошибка при закрытии cr", zap.Error(err))
+							sl.Log.Error("Ошибка при закрытии cr", zap.Error(err))
 						}
 					}()
 					defer func() {
 						if err := r.Body.Close(); err != nil {
-							logger.Log.Error("Ошибка при закрытии r.Body", zap.Error(err))
+							sl.Log.Error("Ошибка при закрытии r.Body", zap.Error(err))
 						}
 					}()
 
@@ -321,8 +198,6 @@ func Middleware(h http.HandlerFunc) http.HandlerFunc {
 					found = true
 				case "identity":
 					found = true
-
-				default:
 				}
 			}
 
@@ -334,11 +209,11 @@ func Middleware(h http.HandlerFunc) http.HandlerFunc {
 
 		// Запуск обработчика
 		timeStart := time.Now()
-		h(ow, r)
+		h.ServeHTTP(ow, r) // Здесь вызываем обработчик
 		duration := time.Since(timeStart)
 
 		// Вывод в лог сводной информации по запросу
-		logger.Log.Info("принят HTTP запрос",
+		sl.Log.Info("принят HTTP запрос",
 			zap.String("URI", r.RequestURI),
 			zap.String("метод", r.Method),
 			zap.Duration("время выполнения запроса", duration),
@@ -346,10 +221,113 @@ func Middleware(h http.HandlerFunc) http.HandlerFunc {
 	})
 }
 
-func (sl *ShortLongT) UserURLs(w http.ResponseWriter, r *http.Request) {
+// Реализация передачи аудиторам сообщения.
+func (sl *ShortLong) MiddlewareAudit(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-	sl.DB.Mu.RLock()
-	defer sl.DB.Mu.RUnlock()
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			sl.Log.Error("Ошибка при чтении тела запроса", zap.Error(err))
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+
+		// Восстановление тела запроса
+		defer r.Body.Close()
+		r.Body = io.NopCloser(bytes.NewBuffer(body))
+
+		// Рекордер для записи ответа
+		recorder := httptest.NewRecorder()
+		h.ServeHTTP(recorder, r)
+
+		// Проверка кода ответа для оповещения наблюдателей
+		if recorder.Code < 400 {
+
+			locationHeader := recorder.Header().Get("Location")
+			processingObserver(body, r.RequestURI, sl, locationHeader)
+		}
+
+		// Передача ответа в исходный ResponseWriter
+		for k, v := range recorder.Header() {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(recorder.Code)
+		w.Write(recorder.Body.Bytes())
+	})
+}
+
+// Обработчик формирования короткого представления из длинной (POST "/").
+func (sl *ShortLong) ShortURLFromLong(w http.ResponseWriter, r *http.Request) {
+
+	sl.List.mu.RLock()
+	defer sl.List.mu.RUnlock()
+
+	sl.BaseAddrShortURL = strings.TrimSuffix(sl.BaseAddrShortURL, "/")
+	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
+
+	// Вся логика обработчика.
+	internalShortURLFromLong(sl.DB.Ptr, sl, w, r)
+}
+
+// Обработчик формирования группы коротких представлений из группы длинных представлений URL (POST "/api/shorten/batch").
+func (sl *ShortLong) ShortURLFromLongBatch(w http.ResponseWriter, r *http.Request) {
+
+	sl.DB.mu.RLock()
+	defer sl.DB.mu.RUnlock()
+
+	sl.BaseAddrShortURL = strings.TrimSuffix(sl.BaseAddrShortURL, "/")
+	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
+
+	// Вся логика обработчика
+	internalShortURLFromLongBatch(sl.DB.Ptr, sl, w, r)
+}
+
+// Обработчик представления оригинального URL, по принятому сокращению (GET "/{id}").
+func (sl *ShortLong) LongURLFromShort(w http.ResponseWriter, r *http.Request) {
+
+	sl.List.mu.RLock()
+	defer sl.List.mu.RUnlock()
+
+	internalLongURLFromShort(sl.DB.Ptr, sl, w, r)
+}
+
+// Обработчик формирования короткого представления по длинной. Формат JSON (POST "/api/shorten").
+func (sl *ShortLong) ShortURLFromLongJSON(w http.ResponseWriter, r *http.Request) {
+
+	sl.List.mu.RLock()
+	defer sl.List.mu.RUnlock()
+
+	sl.BaseAddrShortURL = strings.TrimSuffix(sl.BaseAddrShortURL, "/")
+	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
+
+	// Вся логика обработчика
+	internalShortURLFromLongJSON(sl.DB.Ptr, sl, w, r)
+}
+
+// Обработчик проверки связи с БД (GET "/ping").
+func (sl *ShortLong) PingDB(w http.ResponseWriter, r *http.Request) {
+
+	// Пинг
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	if err := sl.DB.Ptr.PingContext(ctx); err != nil {
+		sl.Log.Error("Ошибка выполнения ping БД",
+			zap.Error(err),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// Обработчик представления длинных URL (GET "/api/user/urls").
+func (sl *ShortLong) UserURLs(w http.ResponseWriter, r *http.Request) {
+
+	sl.DB.mu.RLock()
+	defer sl.DB.mu.RUnlock()
 
 	sl.BaseAddrShortURL = strings.TrimSuffix(sl.BaseAddrShortURL, "/")
 	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
@@ -358,21 +336,153 @@ func (sl *ShortLongT) UserURLs(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func (sl *ShortLongT) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
+// Обработчик указания пар для асинхронного удаления (DELETE "/api/user/urls").
+func (sl *ShortLong) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 
-	sl.DB.Mu.RLock()
-	defer sl.DB.Mu.RUnlock()
+	sl.DB.mu.RLock()
+	defer sl.DB.mu.RUnlock()
 
 	internalDeleteUserURLs(sl.DB.Ptr, sl, w, r)
+}
+
+// Копирование накопленных данных их файла в память. Возвращается ошибка.
+func (sl *ShortLong) LoadFileURL() error {
+
+	sl.List.mu.RLock()
+	defer sl.List.mu.RUnlock()
+
+	// Проверка
+	if sl.FileStoragePath == "" {
+		return errors.New("принят пустой путь к файлу хранения")
+	}
+	if sl.List.ShorByLong == nil {
+		return errors.New("нет указателя на ShortByLong")
+	}
+	if sl.List.LongByShort == nil {
+		return errors.New("нет указателя на LongByShort")
+	}
+
+	// Файл
+	file, err := os.OpenFile(sl.FileStoragePath, os.O_RDONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return fmt.Errorf("ошибка открытия файла <%s>: %v", sl.FileStoragePath, err)
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			sl.Log.Error("Ошибка при закрытии подключения к файлу",
+				zap.Error(err),
+			)
+		}
+	}()
+
+	fi, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("ошибка получения статуса файла: %v", err)
+	}
+	if fi.Size() == 0 {
+		return nil
+	}
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return fmt.Errorf("ошибка чтения файла: %v", err)
+	}
+
+	// Мапы
+	var events []EventURL
+	if err := json.Unmarshal(data, &events); err != nil {
+		return fmt.Errorf("ошибка Unmarshal: %v", err)
+	}
+
+	for _, ev := range events {
+		sl.List.ShorByLong[ev.OriginalURL] = ev.ShortURL
+		sl.List.LongByShort[ev.ShortURL] = ev.OriginalURL
+	}
+
+	return nil
+}
+
+// ---
+
+// Объект хранения данных в памяти.
+var shortenrMemory *ShortLongURL
+
+// Для обеспечения единоразового выполняения инициализации конструктором.
+var OnceMemory sync.Once
+
+// Конструктор. Возвращает хранилище в памяти.
+func NewShortenerMemory() *ShortLongURL {
+	OnceMemory.Do(func() {
+		shortenrMemory = &ShortLongURL{
+			ShorByLong:  make(map[string]string),
+			LongByShort: make(map[string]string),
+			mu:          sync.RWMutex{},
+		}
+	})
+	return shortenrMemory
+}
+
+// Сконфигурироанный экземпляр хранения в БД.
+var shortenrDB *ShortLongDB
+
+// Для обеспечения единоразового выполняения инициализации конструктором.
+var OnceDB sync.Once
+
+// Конструктор. Возвращает хранилище БД.
+//
+// Параметры:
+//
+//	db - указатель на БД.
+func NewShortenerDB(db *sql.DB) *ShortLongDB {
+	OnceDB.Do(func() {
+		shortenrDB = &ShortLongDB{
+			Ptr:         db,
+			mu:          sync.RWMutex{},
+			ChForDelete: make(chan DeleteDB),
+			ChDoDelete:  make(chan struct{}),
+		}
+	})
+	return shortenrDB
+}
+
+// Сконфигурироанный экземпляр сервиса.
+var shortener *ShortLong
+
+// Для обеспечения единоразового выполняения инициализации конструктором.
+var OnceShortener sync.Once
+
+// Конструктор. Возвращает интерфейс объекта.
+//
+// Параметры:
+//
+//	storage - хранилище пар соответствий ссылок.
+//	db - указатель на БД.
+//	fl - флаги.
+//	os - наблюдатель.
+//	log - логгер.
+func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl flags.Config, os observer.Action, log *zap.Logger) Actions {
+	OnceShortener.Do(func() {
+		shortener = &ShortLong{
+			List:             storage,
+			DB:               db,
+			Observer:         os,
+			BaseAddrShortURL: fl.BaseAddrShortURL,
+			ServerAddr:       fl.ServerAddr,
+			FileStoragePath:  fl.FileStoragePath,
+			Log:              log,
+		}
+	})
+
+	return shortener
 }
 
 // Функция наполняет мапы новыми парами соответствий длинных и коротких ссылок. Возвращает короткую ссылку и ошибку.
 //
 // Параметры:
 //
-// sByL - мапа, где в качестве ключа - длинный URL, значения - короткое представление.
-// lByS - мапа, где в качестве ключа - короткое представление, значения - длинный URL.
-// longURL - исходное, длинное значение URL.
+//	sByL - мапа, где в качестве ключа - длинный URL, значения - короткое представление.
+//	lByS - мапа, где в качестве ключа - короткое представление, значения - длинный URL.
+//	longURL - исходное, длинное значение URL.
 func fillListShortByLong(sByL, lByS map[string]string, longURL string) (string, error) {
 
 	var short string
@@ -389,7 +499,7 @@ func fillListShortByLong(sByL, lByS map[string]string, longURL string) (string, 
 		}
 		sByL[longURL] = short
 
-		// Проверка, что в мапе есть уже значение
+		// Проверка, что в мапе уже есть значение
 		// удаление, если есть
 		for k, v := range lByS {
 			if v == longURL {
@@ -407,7 +517,7 @@ func fillListShortByLong(sByL, lByS map[string]string, longURL string) (string, 
 //
 // Параметры:
 //
-// n - количество символов, из которых будет состоять строка.
+//	n - количество символов, из которых будет состоять строка.
 func generateCode(n int) (string, error) {
 	b := make([]byte, n)
 	_, err := io.ReadFull(rand.Reader, b)
@@ -421,10 +531,14 @@ func generateCode(n int) (string, error) {
 //
 // Параметры:
 //
-// filename - полное имя файла.
-// mapShortByLong - мапа, данные из которой, будут переданы в файл.
-func storageFileURL(filename string, mapShortByLong map[string]string) error {
+//	filename - полное имя файла.
+//	mapShortByLong - мапа, данные из которой, будут переданы в файл.
+//	logger - логгер.
+func storageFileURL(filename string, mapShortByLong map[string]string, logger *zap.Logger) error {
 
+	if logger == nil {
+		return errors.New("в аргументе logger, функции storageFileURL, нет указателя")
+	}
 	if filename == "" {
 		return errors.New("принят пустой путь к файлу хранения")
 	}
@@ -438,7 +552,7 @@ func storageFileURL(filename string, mapShortByLong map[string]string) error {
 	}
 	defer func() {
 		if err := file.Close(); err != nil {
-			logger.Log.Error("Ошибка при закрытии подключения к файлу",
+			logger.Error("Ошибка при закрытии подключения к файлу",
 				zap.Error(err))
 		}
 	}()
@@ -462,29 +576,6 @@ func storageFileURL(filename string, mapShortByLong map[string]string) error {
 	file.WriteString("\n")
 	file.WriteString("]\n")
 
-	/*
-		// Реализация с выводом в одну строку
-
-		var events []EventURLT
-		numb := 1
-		for k, v := range mapShortByLong {
-
-			var event EventURLT
-			event.UUID = numb
-			event.OriginalURL = k
-			event.ShortURL = v
-
-			events = append(events, event)
-			numb++
-		}
-
-		encoder := json.NewEncoder(file)
-
-		if err := encoder.Encode(events); err != nil {
-			return err
-		}
-	*/
-
 	return nil
 }
 
@@ -492,9 +583,9 @@ func storageFileURL(filename string, mapShortByLong map[string]string) error {
 //
 // Параметры:
 //
-// db - указатель на БД.
-// longURL - длинное представление исходного URL.
-// shortURL - значение сокращения URL.
+//	db - указатель на БД.
+//	longURL - длинное представление исходного URL.
+//	shortURL - значение сокращения URL.
 func storageDBURLOnConflict(db *sql.DB, longURL, shortURL string) error {
 
 	// Проверка аргументов
@@ -531,9 +622,10 @@ func storageDBURLOnConflict(db *sql.DB, longURL, shortURL string) error {
 //
 // Параметры:
 //
-// db - указатель на БД.
-// longURL - длинное представление исходного URL.
-// shortURL - значение сокращения URL.
+//	db - указатель на БД.
+//	longURL - длинное представление исходного URL.
+//	shortURL - значение сокращения URL.
+//	uuid - ID.
 func storageDBURLSimple(db *sql.DB, longURL, shortURL, uuid string) error {
 
 	// Проверка аргументов
@@ -547,7 +639,7 @@ func storageDBURLSimple(db *sql.DB, longURL, shortURL, uuid string) error {
 		return errors.New("принято пустое значение shortURL аргумента")
 	}
 
-	// Сохранение (обновление) пары соответствия в БД
+	// Сохранение (обновление) пары соответствия в БД.
 	q := `
 		INSERT INTO shortener (long, short, uuid) 
 		VALUES ($1, $2, $3) 
@@ -568,9 +660,10 @@ func storageDBURLSimple(db *sql.DB, longURL, shortURL, uuid string) error {
 //
 // Параметры:
 //
-// tx - указатель на транзакцию.
-// longURL - длинное представление исходного URL.
-// shortURL - значение сокращения URL.
+//	tx - указатель на транзакцию.
+//	longURL - длинное представление исходного URL.
+//	shortURL - значение сокращения URL.
+//	uuidRx - ID.
 func storageDBURLtx(tx *sql.Tx, longURL, shortURL, uuidRx string) error {
 
 	// Проверка аргументов
@@ -584,7 +677,7 @@ func storageDBURLtx(tx *sql.Tx, longURL, shortURL, uuidRx string) error {
 		return errors.New("принято пустое значение shortURL аргумента")
 	}
 
-	// Сохранение (обновление) пары соответствия в БД
+	// Сохранение (обновление) пары соответствия в БД.
 	str := `
 		INSERT INTO shortener (long, short, uuid) 
 		VALUES ($1, $2, $3) 
@@ -608,8 +701,9 @@ func storageDBURLtx(tx *sql.Tx, longURL, shortURL, uuidRx string) error {
 //
 // Парметры:
 //
-// db - указатель на БД.
-// longURL - длинное представление URL.
+//	db - указатель на БД.
+//	longURL - длинное представление URL.
+//	uuid - ID.
 func actionStorageDBURLSimple(db *sql.DB, longURL, uuid string) (string, error) {
 
 	// Проверки акргументов
@@ -620,16 +714,16 @@ func actionStorageDBURLSimple(db *sql.DB, longURL, uuid string) (string, error) 
 		return "", errors.New("пустое значение в longURL")
 	}
 
-	// Генерация кода сокращения
+	// Генерация кода сокращения.
 	shortURL, err := generateCode(8)
 	if err != nil {
 		return "", fmt.Errorf("ошибка при генерации нового кода: <%w>", err)
 	}
 
-	// Сохранение в БД
+	// Сохранение в БД.
 	err = storageDBURLSimple(db, longURL, shortURL, uuid)
 	if err != nil {
-		return "", err // ожидается появление ошибки по уникальности короткого представления
+		return "", err // ожидается появление ошибки по уникальности короткого представления.
 	}
 
 	return shortURL, nil
@@ -639,8 +733,9 @@ func actionStorageDBURLSimple(db *sql.DB, longURL, uuid string) (string, error) 
 //
 // Парметры:
 //
-// tx - указатель на транзакцию.
-// longURL - длинное представление URL.
+//	tx - указатель на транзакцию.
+//	longURL - длинное представление URL.
+//	uuidRx - ID.
 func actionStorageDBURLtx(tx *sql.Tx, longURL, uuidRx string) (string, error) {
 
 	// Проверки акргументов
@@ -651,16 +746,16 @@ func actionStorageDBURLtx(tx *sql.Tx, longURL, uuidRx string) (string, error) {
 		return "", errors.New("пустое значение в longURL")
 	}
 
-	// Генерация кода сокращения
+	// Генерация кода сокращения.
 	shortURL, err := generateCode(8)
 	if err != nil {
 		return "", fmt.Errorf("ошибка при генерации нового кода: <%w>", err)
 	}
 
-	// Сохранение в БД
+	// Сохранение в БД.
 	err = storageDBURLtx(tx, longURL, shortURL, uuidRx)
 	if err != nil {
-		return "", err // ожидается появление ошибки по уникальности короткого представления
+		return "", err // ожидается появление ошибки по уникальности короткого представления.
 	}
 
 	return shortURL, nil
@@ -670,11 +765,13 @@ func actionStorageDBURLtx(tx *sql.Tx, longURL, uuidRx string) (string, error) {
 //
 // Параметры:
 //
-// db - указатель на БД.
-// batchLongURL - массив длинных ссылок.
-func allActionsStorageBatchDBURL(db *sql.DB, batchLongURL []rxLongURLBatchT, baseAddrShortURL, uuidRx string) ([]txShortURLBatchT, error) {
+//	db - указатель на БД.
+//	batchLongURL - массив длинных ссылок.
+//	baseAddrShortURL - базовый адрес.
+//	uuidRx - ID.
+func allActionsStorageBatchDBURL(db *sql.DB, batchLongURL []rxLongURLBatch, baseAddrShortURL, uuidRx string) ([]txShortURLBatch, error) {
 
-	// Проверка аргументов
+	// Проверка аргументов.
 	if db == nil {
 		return nil, errors.New("нет указателя на БД")
 	}
@@ -685,11 +782,11 @@ func allActionsStorageBatchDBURL(db *sql.DB, batchLongURL []rxLongURLBatchT, bas
 		return nil, errors.New("в принятом массиве длинных ссылок нет данных")
 	}
 
-	errUniqueShort := `pq: duplicate key value violates unique constraint "shortener_short_key"` // ошибка по уникальности значений короткого представления
+	errUniqueShort := `pq: duplicate key value violates unique constraint "shortener_short_key"` // ошибка по уникальности значений короткого представления.
 
-	txData := make([]txShortURLBatchT, 0)
+	txData := make([]txShortURLBatch, 0)
 
-	// Начало транзакции
+	// Начало транзакции.
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("ошибка начала транзакции: <%w>", err)
@@ -720,7 +817,7 @@ func allActionsStorageBatchDBURL(db *sql.DB, batchLongURL []rxLongURLBatchT, bas
 				v.OriginalURL = strings.Trim(v.OriginalURL, "\"")
 
 				shortURL, err = actionStorageDBURLtx(tx, v.OriginalURL, uuidRx)
-				if err != nil && err.Error() == errUniqueShort { // проверка ошибки по уникальности короткого представления
+				if err != nil && err.Error() == errUniqueShort { // проверка ошибки по уникальности короткого представления.
 					continue
 				}
 				if err != nil {
@@ -731,15 +828,15 @@ func allActionsStorageBatchDBURL(db *sql.DB, batchLongURL []rxLongURLBatchT, bas
 			}
 		}
 
-		// заполнение возвращаемого массива
-		var el txShortURLBatchT
+		// заполнение возвращаемого массива.
+		var el txShortURLBatch
 		el.CorrelationID = v.CorrelationID
 		el.ShortURL = baseAddrShortURL + shortURL
 
 		txData = append(txData, el)
 	}
 
-	// Подтверждение транзакции
+	// Подтверждение транзакции.
 	if err = tx.Commit(); err != nil {
 		return nil, fmt.Errorf("ошибка подтверждения транзакции: <%w>", err)
 	}
@@ -751,10 +848,10 @@ func allActionsStorageBatchDBURL(db *sql.DB, batchLongURL []rxLongURLBatchT, bas
 //
 // Параметры:
 //
-// batchLongURL - массив длинных ссылок.
-// sByL - мапа где ключ - длинный URL, значение - короткое представление.
-// lByS - мапа где ключ - короткое представление, значение - длинный URL.
-func storageBatchMap(batchLongURL []rxLongURLBatchT, sByL, lByS map[string]string) error {
+//	batchLongURL - массив длинных ссылок.
+//	sByL - мапа где ключ - длинный URL, значение - короткое представление.
+//	lByS - мапа где ключ - короткое представление, значение - длинный URL.
+func storageBatchMap(batchLongURL []rxLongURLBatch, sByL, lByS map[string]string) error {
 
 	// Проверка аргументов
 	if batchLongURL == nil {
@@ -785,11 +882,15 @@ func storageBatchMap(batchLongURL []rxLongURLBatchT, sByL, lByS map[string]strin
 //
 // Парметры:
 //
-// lByS - мапа где ключ - короткое представление, значение - длинный URL.
-// batchLongURL - принятый массив длинных ссылок.
-func prapareBatchResponse(lByS map[string]string, batchLongURL []rxLongURLBatchT, conf *ShortLongT) ([]txShortURLBatchT, error) {
+//	lByS - мапа где ключ - короткое представление, значение - длинный URL.
+//	batchLongURL - принятый массив длинных ссылок.
+//	conf - конфигурация.
+func prapareBatchResponse(lByS map[string]string, batchLongURL []rxLongURLBatch, conf *ShortLong) ([]txShortURLBatch, error) {
 
-	// Проверка аргументов
+	// Проверка аргументов.
+	if conf == nil {
+		return nil, errors.New("нет указателя на мапу conf")
+	}
 	if lByS == nil {
 		return nil, errors.New("нет указателя на мапу lByS")
 	}
@@ -800,16 +901,16 @@ func prapareBatchResponse(lByS map[string]string, batchLongURL []rxLongURLBatchT
 		return nil, errors.New("принят пустой массив batchLongURL")
 	}
 
-	// Наполнение массива
-	txData := make([]txShortURLBatchT, 0)
+	// Наполнение массива.
+	txData := make([]txShortURLBatch, 0)
 
 	for _, v := range batchLongURL {
 
-		var el txShortURLBatchT
+		var el txShortURLBatch
 
 		v.OriginalURL = strings.Trim(v.OriginalURL, "\"")
 
-		// Поиск короткой ссылки по длинной
+		// Поиск короткой ссылки по длинной.
 		for s, l := range lByS {
 
 			if l == v.OriginalURL {
@@ -830,11 +931,13 @@ func prapareBatchResponse(lByS map[string]string, batchLongURL []rxLongURLBatchT
 //
 // Параметры:
 //
-// sl - конфигурация для работы сервиса сокращения.
-// rxLongURL - исходный URL.
-func workWithRxData(db *sql.DB, sl *ShortLongT, rxLongURL, uuidRx string) (short string, err error) {
+//	db - указатель на БД.
+//	sl - конфигурация для работы сервиса сокращения.
+//	rxLongURL - исходный URL.
+//	uuidRx - ID.
+func workWithRxData(db *sql.DB, sl *ShortLong, rxLongURL, uuidRx string) (short string, err error) {
 
-	// Проверка аргументов
+	// Проверка аргументов.
 	if sl == nil {
 		return "", fmt.Errorf("в принятом аргументе sl, нет указателя")
 	}
@@ -845,13 +948,13 @@ func workWithRxData(db *sql.DB, sl *ShortLongT, rxLongURL, uuidRx string) (short
 		return "", fmt.Errorf("в принятом аргументе sl, нет указателя на мапы")
 	}
 
-	sl.DB.Mu.RLock()
-	defer sl.DB.Mu.RUnlock()
+	sl.DB.mu.RLock()
+	defer sl.DB.mu.RUnlock()
 
 	// Работа
 	var shortURL string
 
-	if db != nil { // сохранение пары соответствия в БД
+	if db != nil { // сохранение пары соответствия в БД.
 
 		shortURL, err = actionStorageDBURLSimple(db, rxLongURL, uuidRx)
 		if err != nil {
@@ -860,20 +963,20 @@ func workWithRxData(db *sql.DB, sl *ShortLongT, rxLongURL, uuidRx string) (short
 		}
 	}
 
-	if db == nil { // сохранение пары соответствия в мапы и файл
+	if db == nil { // сохранение пары соответствия в мапы и файл.
 
 		shortURL, err = fillListShortByLong(sl.List.ShorByLong, sl.List.LongByShort, rxLongURL)
 		if err != nil {
 			return "", fmt.Errorf("ошибка заполнения мап: <%w>", err)
 		}
 
-		err = storageFileURL(sl.FileStoragePath, sl.List.ShorByLong)
+		err = storageFileURL(sl.FileStoragePath, sl.List.ShorByLong, sl.Log)
 		if err != nil {
 			return "", fmt.Errorf("ошибка при сохранении в файл: <%w>", err)
 		}
 	}
 
-	// Возврат результата
+	// Возврат результата.
 	short = shortURL
 
 	return short, nil
@@ -883,28 +986,25 @@ func workWithRxData(db *sql.DB, sl *ShortLongT, rxLongURL, uuidRx string) (short
 //
 // Параметры:
 //
-// db - указатель на БД
-// sl - конфигурация.
-// w - http.ResponseWriter.
-// r - *http.Request.
-func internalShortURLFromLong(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http.Request) {
+//	db - указатель на БД
+//	sl - конфигурация.
+//	w - http.ResponseWriter.
+//	r - *http.Request.
+func internalShortURLFromLong(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Request) {
 
-	// Проверка аргументов
+	// Проверка аргументов.
 	if sl == nil {
-		logger.Log.Error("Нет указателя в аргументе sl",
-			zap.String("method", r.Method),
-			zap.String("url", r.URL.String()),
-		)
+		log.Println("В аргументе sl, функции internalShortURLFromLong, нет указателя")
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	if r == nil {
-		logger.Log.Error("Нет указателя в аргументе r")
+		sl.Log.Error("Нет указателя в аргументе r")
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	if w == nil {
-		logger.Log.Error("Нет указателя в аргументе w",
+		sl.Log.Error("Нет указателя в аргументе w",
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
@@ -912,8 +1012,8 @@ func internalShortURLFromLong(db *sql.DB, sl *ShortLongT, w http.ResponseWriter,
 		return
 	}
 
-	// Получение тела запроса
-	rxLongURL, uuidRx, err := InternalShortURLFromLongLayerRx(r)
+	// Получение тела запроса.
+	rxLongURL, uuidRx, err := InternalShortURLFromLongLayerRx(r, sl.Log)
 	if err != nil {
 		switch err.Error() {
 		case "500":
@@ -923,7 +1023,7 @@ func internalShortURLFromLong(db *sql.DB, sl *ShortLongT, w http.ResponseWriter,
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
 			)
@@ -932,7 +1032,7 @@ func internalShortURLFromLong(db *sql.DB, sl *ShortLongT, w http.ResponseWriter,
 		}
 	}
 
-	// Обработка
+	// Обработка.
 	result, flagConflict, err := InternalShortURLFromLongLayerWork(db, sl, rxLongURL, uuidRx)
 	if err != nil {
 		switch err.Error() {
@@ -940,7 +1040,7 @@ func internalShortURLFromLong(db *sql.DB, sl *ShortLongT, w http.ResponseWriter,
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
 			)
@@ -949,15 +1049,15 @@ func internalShortURLFromLong(db *sql.DB, sl *ShortLongT, w http.ResponseWriter,
 		}
 	}
 
-	// Ответ
-	err = InternalShortURLFromLongLayerTx(w, db, result, flagConflict)
+	// Ответ.
+	err = InternalShortURLFromLongLayerTx(w, result, flagConflict, sl.Log)
 	if err != nil {
 		switch err.Error() {
 		case "500":
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
 			)
@@ -971,39 +1071,35 @@ func internalShortURLFromLong(db *sql.DB, sl *ShortLongT, w http.ResponseWriter,
 //
 // Параметры:
 //
-// db - указатель на БД
-// sl - конфигурация.
-// w - http.ResponseWriter.
-// r - *http.Request.
-func internalLongURLFromShort(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http.Request) {
+//	db - указатель на БД
+//	sl - конфигурация.
+//	w - http.ResponseWriter.
+//	r - *http.Request.
+func internalLongURLFromShort(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Request) {
 
-	// Проверка аргументов
+	// Проверка аргументов.
+	if sl == nil {
+		log.Println("В аргументе sl, функции internalLongURLFromShort, нет указателя")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 	if w == nil {
-		logger.Log.Error("Ошибка в internalLongURLFromShort",
+		sl.Log.Error("Ошибка в internalLongURLFromShort",
 			zap.String("reason", "нет указателя на аргумент w"),
 		)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	if r == nil {
-		logger.Log.Error("Ошибка в internalShortURLFromLong",
+		sl.Log.Error("Ошибка в internalShortURLFromLong",
 			zap.String("reason", "нет указателя на аргумент r"),
 		)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	if sl == nil {
-		logger.Log.Error("Ошибка в internalLongURLFromShort",
-			zap.String("reason", "нет указателя на аргумент sl"),
-			zap.String("method", r.Method),
-			zap.String("url", r.URL.String()),
-		)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
 
-	// Приём
-	short, err := internalLongURLFromShortLayerRx(r)
+	// Приём.
+	short, err := internalLongURLFromShortLayerRx(r, sl.Log)
 	if err != nil {
 		switch err.Error() {
 		case "500":
@@ -1013,7 +1109,7 @@ func internalLongURLFromShort(db *sql.DB, sl *ShortLongT, w http.ResponseWriter,
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
 			)
@@ -1022,7 +1118,7 @@ func internalLongURLFromShort(db *sql.DB, sl *ShortLongT, w http.ResponseWriter,
 		}
 	}
 
-	// Логика
+	// Логика.
 	long, err := internalLongURLFromShortLayerWork(db, sl, short)
 	if err != nil {
 		switch err.Error() {
@@ -1033,14 +1129,13 @@ func internalLongURLFromShort(db *sql.DB, sl *ShortLongT, w http.ResponseWriter,
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return
 		case "404":
-			//http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 			http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
 			return
 		case "410":
 			http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
 			)
@@ -1049,7 +1144,7 @@ func internalLongURLFromShort(db *sql.DB, sl *ShortLongT, w http.ResponseWriter,
 		}
 	}
 
-	// Ответ
+	// Ответ.
 	internalLongURLFromShortLayerTx(w, long)
 }
 
@@ -1057,32 +1152,28 @@ func internalLongURLFromShort(db *sql.DB, sl *ShortLongT, w http.ResponseWriter,
 //
 // Параметры:
 //
-// db - указатель на БД
-// sl - конфигурация.
-// w - http.ResponseWriter.
-// r - *http.Request.
-func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http.Request) {
+//	db - указатель на БД
+//	sl - конфигурация.
+//	w - http.ResponseWriter.
+//	r - *http.Request.
+func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Request) {
 
-	// Проверка аргументов
+	// Проверка аргументов.
+	if sl == nil {
+		log.Println("В аргументе sl, функции internalShortURLFromLongJSON, нет указателя")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 	if w == nil {
-		logger.Log.Error("Ошибка в internalShortURLFromLongJSON",
+		sl.Log.Error("Ошибка в internalShortURLFromLongJSON",
 			zap.String("reason", "нет указателя на аргумент w"),
 		)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	if r == nil {
-		logger.Log.Error("Ошибка в internalShortURLFromLongJSON",
+		sl.Log.Error("Ошибка в internalShortURLFromLongJSON",
 			zap.String("reason", "нет указателя на аргумент r"),
-		)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-	if sl == nil {
-		logger.Log.Error("Ошибка в internalShortURLFromLongJSON",
-			zap.String("reason", "нет указателя на аргумент sl"),
-			zap.String("method", r.Method),
-			zap.String("url", r.URL.String()),
 		)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
@@ -1092,8 +1183,8 @@ func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLongT, w http.ResponseWri
 		return
 	}
 
-	// Приём
-	rxJSON, uuidRx, err := internalShortURLFromLongJSONLayerRx(r)
+	// Приём.
+	rxJSON, uuidRx, err := internalShortURLFromLongJSONLayerRx(r, sl.Log)
 	if err != nil {
 		switch err.Error() {
 		case "500":
@@ -1103,7 +1194,7 @@ func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLongT, w http.ResponseWri
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
 			)
@@ -1112,7 +1203,7 @@ func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLongT, w http.ResponseWri
 		}
 	}
 
-	// Логика
+	// Логика.
 	shortStr, flagConflict, err := internalShortURLFromLongJSONLayerWork(db, sl, rxJSON, uuidRx)
 	if err != nil {
 		switch err.Error() {
@@ -1120,7 +1211,7 @@ func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLongT, w http.ResponseWri
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
 			)
@@ -1129,15 +1220,15 @@ func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLongT, w http.ResponseWri
 		}
 	}
 
-	// Ответ
-	err = internalShortURLFromLongJSONLayerTx(w, shortStr, flagConflict)
+	// Ответ.
+	err = internalShortURLFromLongJSONLayerTx(w, shortStr, flagConflict, sl.Log)
 	if err != nil {
 		switch err.Error() {
 		case "500":
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
 			)
@@ -1151,10 +1242,19 @@ func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLongT, w http.ResponseWri
 //
 // Параметры:
 //
-// db - указатель на БД.
-// longURL - длинное представление URL.
+//	db - указатель на БД.
+//	longURL - длинное представление URL.
 func readShortByLongDB(db *sql.DB, longURL string) (string, error) {
 
+	// Проверка аргументов
+	if db == nil {
+		return "", errors.New("нет указателя в аргументе db")
+	}
+	if longURL == "" {
+		return "", errors.New("в аргументе longURL нет содержимого")
+	}
+
+	// Логика
 	var shortURL string
 
 	query := `SELECT short FROM shortener WHERE long = $1`
@@ -1174,11 +1274,11 @@ func readShortByLongDB(db *sql.DB, longURL string) (string, error) {
 //
 // Параметры:
 //
-// db - указатель на БД.
-// shortURL - сокращенное представление URL.
+//	db - указатель на БД.
+//	shortURL - сокращенное представление URL.
 func readLongAndFlagByShortDB(db *sql.DB, shortURL string) (string, error) {
 
-	// Проверка аргументов
+	// Проверка аргументов.
 	if db == nil {
 		return "", errors.New("в аргументе db нет указателя")
 	}
@@ -1186,7 +1286,7 @@ func readLongAndFlagByShortDB(db *sql.DB, shortURL string) (string, error) {
 		return "", errors.New("в аргументе shortURL нет содержимого")
 	}
 
-	// Логика
+	// Логика.
 	var longURL string
 	var deleteFlag bool
 
@@ -1200,7 +1300,7 @@ func readLongAndFlagByShortDB(db *sql.DB, shortURL string) (string, error) {
 		return "", fmt.Errorf("ошибка при выполнении запроса: %v", err)
 	}
 
-	// Возврат
+	// Возврат.
 	if deleteFlag {
 		return "", nil
 	}
@@ -1211,28 +1311,25 @@ func readLongAndFlagByShortDB(db *sql.DB, shortURL string) (string, error) {
 //
 // Параметры:
 //
-// db - указатель на БД
-// sl - конфигурация.
-// w - http.ResponseWriter.
-// r - *http.Request.
-func internalShortURLFromLongBatch(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http.Request) {
+//	db - указатель на БД
+//	sl - конфигурация.
+//	w - http.ResponseWriter.
+//	r - *http.Request.
+func internalShortURLFromLongBatch(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Request) {
 
 	// Проверка аргументов
 	if sl == nil {
-		logger.Log.Error("Нет указателя в аргументе sl",
-			zap.String("method", r.Method),
-			zap.String("url", r.URL.String()),
-		)
+		log.Println("В аргументе sl, функции internalShortURLFromLongBatch, нет указателя")
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	if r == nil {
-		logger.Log.Error("Нет указателя в аргументе r")
+		sl.Log.Error("Нет указателя в аргументе r")
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	if w == nil {
-		logger.Log.Error("Нет указателя в аргументе w",
+		sl.Log.Error("Нет указателя в аргументе w",
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
@@ -1240,8 +1337,8 @@ func internalShortURLFromLongBatch(db *sql.DB, sl *ShortLongT, w http.ResponseWr
 		return
 	}
 
-	// Приём
-	rxLongURLBatch, uuidRx, err := internalShortURLFromLongBatchLayerRx(r)
+	// Приём.
+	rxLongURLBatch, uuidRx, err := internalShortURLFromLongBatchLayerRx(r, sl.Log)
 	if err != nil {
 		switch err.Error() {
 		case "400":
@@ -1251,7 +1348,7 @@ func internalShortURLFromLongBatch(db *sql.DB, sl *ShortLongT, w http.ResponseWr
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("code", err.Error()),
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
@@ -1261,7 +1358,7 @@ func internalShortURLFromLongBatch(db *sql.DB, sl *ShortLongT, w http.ResponseWr
 		}
 	}
 
-	// Обработка
+	// Обработка.
 	batchShortURL, err := internalShortURLFromLongBatchLayerWork(db, sl, rxLongURLBatch, uuidRx)
 	if err != nil {
 		switch err.Error() {
@@ -1269,7 +1366,7 @@ func internalShortURLFromLongBatch(db *sql.DB, sl *ShortLongT, w http.ResponseWr
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("code", err.Error()),
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
@@ -1279,15 +1376,15 @@ func internalShortURLFromLongBatch(db *sql.DB, sl *ShortLongT, w http.ResponseWr
 		}
 	}
 
-	// Ответ
-	err = internalShortURLFromLongBatchLayerTx(w, batchShortURL)
+	// Ответ.
+	err = internalShortURLFromLongBatchLayerTx(w, batchShortURL, sl.Log)
 	if err != nil {
 		switch err.Error() {
 		case "500":
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("code", err.Error()),
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
@@ -1302,19 +1399,20 @@ func internalShortURLFromLongBatch(db *sql.DB, sl *ShortLongT, w http.ResponseWr
 //
 // Параметры:
 //
-// db - указатель на БД
-// w - http.ResponseWriter.
-// r - *http.Request.
-func internalDeleteUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http.Request) {
+//	db - указатель на БД
+//	sl - конфигурация.
+//	w - http.ResponseWriter.
+//	r - *http.Request.
+func internalDeleteUserURLs(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Request) {
 
-	// Проверка аргументов
+	// Проверка аргументов.
 	if r == nil {
-		logger.Log.Error("В аргументе r нет указателя")
+		sl.Log.Error("В аргументе r нет указателя")
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	if db == nil {
-		logger.Log.Error("В аргументе db нет указателя",
+		sl.Log.Error("В аргументе db нет указателя",
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
@@ -1322,7 +1420,7 @@ func internalDeleteUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r
 		return
 	}
 	if w == nil {
-		logger.Log.Error("В аргументе w нет указателя",
+		sl.Log.Error("В аргументе w нет указателя",
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
@@ -1330,8 +1428,8 @@ func internalDeleteUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r
 		return
 	}
 
-	// Приём
-	rxArray, uuid, err := internalDeleteUserURLsLayerRx(r)
+	// Приём.
+	rxArray, uuid, err := internalDeleteUserURLsLayerRx(r, sl.Log)
 	if err != nil {
 		switch err.Error() {
 		case "400":
@@ -1341,7 +1439,7 @@ func internalDeleteUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("code", err.Error()),
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
@@ -1351,7 +1449,7 @@ func internalDeleteUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r
 		}
 	}
 
-	// Логика
+	// Логика.
 	err = internalDeleteUserURLsLayerWork(db, sl, rxArray, uuid)
 	if err != nil {
 		switch err.Error() {
@@ -1362,7 +1460,7 @@ func internalDeleteUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("code", err.Error()),
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
@@ -1372,7 +1470,7 @@ func internalDeleteUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r
 		}
 	}
 
-	// Ответ
+	// Ответ.
 	internalDeleteUserURLsLayerTx(w)
 }
 
@@ -1380,13 +1478,13 @@ func internalDeleteUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r
 //
 // Параметры:
 //
-// db - указатель на БД.
-// shortURLs - массив кротких URL.
-// uuid - авторизация пользователя.
-/*
-func markFlagDelDB(db *sql.DB, sl *ShortLongT, shortURLs []string, uuid string) error {
+//	db - указатель на БД.
+//	sl - конфигурация.
+//	shortURLs - массив кротких URL.
+//	uuid - авторизация пользователя.
+func markFlagDelDB(db *sql.DB, sl *ShortLong, shortURLs []string, uuidRx string) error {
 
-	// Проверка аргументов
+	// Проверка аргументов.
 	if db == nil {
 		return errors.New("нет указателя в аргументе db")
 	}
@@ -1397,85 +1495,7 @@ func markFlagDelDB(db *sql.DB, sl *ShortLongT, shortURLs []string, uuid string) 
 		return errors.New("нет данных в аргументе shortURLs")
 	}
 
-	// Логика
-	cnt := 0
-	query := `UPDATE shortener SET deleteFlag = true WHERE short = $1 AND uuid = $2`
-
-	for _, shortURL := range shortURLs {
-
-		msg := fmt.Sprintf("---Взведение флага delete для: shortURL<%s> uuid<%s>", shortURL, uuid) //=============
-		WriteInFileDebugData(msg)                                                                  //=============
-
-		result, err := db.Exec(query, shortURL, uuid)
-		if err != nil {
-			logger.Log.Error("Ошибка при изменении значения флага deleteFlag",
-				zap.Error(err),
-				zap.String("short", shortURL),
-			)
-
-			msg := fmt.Sprintf("---Ошибка взведения флага delete для: shortURL<%s> uuid<%s>", shortURL, uuid) //=============
-			WriteInFileDebugData(msg)                                                                         //=============
-
-			continue
-		}
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			logger.Log.Error("Ошибка при получении количества затронутых строк",
-				zap.Error(err),
-				zap.String("short", shortURL),
-			)
-
-			msg := fmt.Sprintf("---Ошибка при получении затронутых строк delete для: shortURL<%s> uuid<%s>", shortURL, uuid) //=============
-			WriteInFileDebugData(msg)                                                                                        //=============
-
-			continue
-		}
-		if rowsAffected > 0 { // проверка что deleteFlag взведён
-
-			var data DeleteDBT
-
-			data.Short = shortURL
-			data.UUID = uuid
-
-			sl.DB.ChForDelete <- data // передача в go данных строки для удаления
-
-			cnt++
-
-			msg := fmt.Sprintf("---Содержимое счётчика: <%d>", cnt) //=============
-			WriteInFileDebugData(msg)                               //=============
-		} else {
-
-			msg := fmt.Sprintf("   флаг delete не взведён: shortURL<%s> uuid<%s>", shortURL, uuid) //=============
-			WriteInFileDebugData(msg)                                                              //=============
-
-		}
-	}
-
-	if cnt > 0 {
-		sl.DB.ChDoDelete <- struct{}{} // передача в go разрешения на запуск очистки таблицы
-
-		msg := fmt.Sprintf("---Передано разрешение на обработку по удалению: <%d>", cnt) //=============
-		WriteInFileDebugData(msg)                                                        //=============
-	}
-
-	return nil
-}
-*/
-
-func markFlagDelDB(db *sql.DB, sl *ShortLongT, shortURLs []string, uuidRx string) error {
-
-	// Проверка аргументов
-	if db == nil {
-		return errors.New("нет указателя в аргументе db")
-	}
-	if shortURLs == nil {
-		return errors.New("нет указателя в аргументе shortURLs")
-	}
-	if len(shortURLs) == 0 {
-		return errors.New("нет данных в аргументе shortURLs")
-	}
-
-	// Логика
+	// Логика.
 	cnt := 0
 	query := `UPDATE shortener SET deleteFlag = true WHERE short = $1 AND uuid = $2`
 
@@ -1483,7 +1503,7 @@ func markFlagDelDB(db *sql.DB, sl *ShortLongT, shortURLs []string, uuidRx string
 
 		result, err := db.Exec(query, shortURL, uuidRx)
 		if err != nil {
-			logger.Log.Error("Ошибка при изменении значения флага deleteFlag",
+			sl.Log.Error("Ошибка при изменении значения флага deleteFlag",
 				zap.Error(err),
 				zap.String("short", shortURL),
 				zap.String("uuidRx", uuidRx),
@@ -1492,28 +1512,28 @@ func markFlagDelDB(db *sql.DB, sl *ShortLongT, shortURLs []string, uuidRx string
 		}
 		rowsAffected, err := result.RowsAffected()
 		if err != nil {
-			logger.Log.Error("Ошибка при получении количества затронутых строк",
+			sl.Log.Error("Ошибка при получении количества затронутых строк",
 				zap.Error(err),
 				zap.String("short", shortURL),
 				zap.String("uuidRx", uuidRx),
 			)
 			continue
 		}
-		if rowsAffected > 0 { // проверка что deleteFlag взведён
+		if rowsAffected > 0 { // проверка что deleteFlag взведён.
 
-			var data DeleteDBT
+			var data DeleteDB
 
 			data.Short = shortURL
 			data.UUID = uuidRx
 
-			sl.DB.ChForDelete <- data // передача в go данных строки для удаления
+			sl.DB.ChForDelete <- data // Передача в go данных строки для удаления.
 
-			cnt++ // Счёт переданных в go записей на удаление
+			cnt++ // Счёт переданных в go записей на удаление.
 		}
 	}
 
 	if cnt > 0 {
-		sl.DB.ChDoDelete <- struct{}{} // передача в go разрешения на запуск очистки таблицы
+		sl.DB.ChDoDelete <- struct{}{} // передача в go разрешения на запуск очистки таблицы.
 	}
 
 	return nil
@@ -1523,28 +1543,25 @@ func markFlagDelDB(db *sql.DB, sl *ShortLongT, shortURLs []string, uuidRx string
 //
 // Параметры:
 //
-// db - указатель на БД
-// sl - конфигурация.
-// w - http.ResponseWriter.
-// r - *http.Request.
-func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http.Request) {
+//	db - указатель на БД
+//	sl - конфигурация.
+//	w - http.ResponseWriter.
+//	r - *http.Request.
+func internalUserURLs(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Request) {
 
-	// Проверка аргументов
-	if r == nil {
-		logger.Log.Error("В аргументе r нет указателя")
+	// Проверка аргументов.
+	if sl == nil {
+		log.Println("В аргументе sl нет указателя")
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	if sl == nil {
-		logger.Log.Error("В аргументе sl нет указателя",
-			zap.String("method", r.Method),
-			zap.String("url", r.URL.String()),
-		)
+	if r == nil {
+		sl.Log.Error("В аргументе r нет указателя")
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	if w == nil {
-		logger.Log.Error("В аргументе w нет указателя",
+		sl.Log.Error("В аргументе w нет указателя",
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
@@ -1552,7 +1569,7 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 		return
 	}
 
-	// Логика
+	// Логика.
 	shortLong, err := internalUserURLsLayerWork(db, sl)
 	if err != nil {
 		switch err.Error() {
@@ -1560,7 +1577,7 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("code", err.Error()),
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
@@ -1570,15 +1587,15 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 		}
 	}
 
-	// Ответ
-	err = internalUserURLsLayerTx(w, shortLong)
+	// Ответ.
+	err = internalUserURLsLayerTx(w, shortLong, sl.Log)
 	if err != nil {
 		switch err.Error() {
 		case "500":
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		default:
-			logger.Log.Error("Код ошибки не опознан",
+			sl.Log.Error("Код ошибки не опознан",
 				zap.String("code", err.Error()),
 				zap.String("method", r.Method),
 				zap.String("url", r.URL.String()),
@@ -1593,31 +1610,40 @@ func internalUserURLs(db *sql.DB, sl *ShortLongT, w http.ResponseWriter, r *http
 //
 // Параметры:
 //
-// db - указатель на БД.
-func GetAllShortenerDB(db *sql.DB) (map[string]string, error) {
+//	db - указатель на БД.
+//	log - логгер.
+func GetAllShortenerDB(db *sql.DB, log *zap.Logger) (map[string]string, error) {
 
-	shortToLongMap := make(map[string]string)
+	// Проверка аргументов
+	if db == nil {
+		return nil, errors.New("в аргументе db нет указателя")
+	}
+	if log == nil {
+		return nil, errors.New("в аргументе log нет указателя")
+	}
 
 	// Запрос
+	shortToLongMap := make(map[string]string)
+
 	rows, err := db.Query("SELECT short, long FROM shortener")
 	if err != nil {
 		return nil, fmt.Errorf("ошибка выполнения запроса: %w", err)
 	}
 	defer func() {
 		if err := rows.Close(); err != nil {
-			logger.Log.Error("Ошибка закрытия rows",
+			log.Error("Ошибка закрытия rows",
 				zap.Error(err),
 			)
 		}
 	}()
 
-	// Обрабатываем результаты
+	// Обрабатываем результаты.
 	for rows.Next() {
 
 		var short, long string
 
 		if err := rows.Scan(&short, &long); err != nil {
-			logger.Log.Error("ошибка сканирования строки",
+			log.Error("ошибка сканирования строки",
 				zap.Error(err),
 			)
 			return nil, fmt.Errorf("ошибка сканирования строки: %w", err)
@@ -1626,7 +1652,7 @@ func GetAllShortenerDB(db *sql.DB) (map[string]string, error) {
 	}
 
 	if err := rows.Err(); err != nil {
-		logger.Log.Error("ошибка при итерации по строкам",
+		log.Error("ошибка при итерации по строкам",
 			zap.Error(err),
 		)
 		return nil, fmt.Errorf("ошибка при итерации по строкам: %w", err)
@@ -1639,16 +1665,17 @@ func GetAllShortenerDB(db *sql.DB) (map[string]string, error) {
 //
 // Параметры:
 //
-// db - указатель на БД.
+//	db - указатель на БД.
 func ClearShortenerTable(db *sql.DB) error {
 
+	// Проверка аргументов
 	if db == nil {
 		return errors.New("нет указателя в аргументе db")
 	}
 
 	query := `TRUNCATE TABLE shortener RESTART IDENTITY;`
 
-	// Запрос
+	// Запрос.
 	_, err := db.Exec(query)
 	if err != nil {
 		return fmt.Errorf("ошибка при очистке таблицы: <%w>", err)
@@ -1657,25 +1684,63 @@ func ClearShortenerTable(db *sql.DB) error {
 	return nil
 }
 
-// Вспомогательная функция для отладки работы приложения.
+// Взаимодействие с наблюдателями.
 //
 // Параметры:
 //
-// str - строка, для записи в файл.
-/*
-func WriteInFileDebugData(str string) {
-	filename := "debug.txt"
+//	body - тело запроса.
+//	path - путь запроса.
+//	sl - параметры сервиса.
+//	locationHeader - содержимое заголовка location
+func processingObserver(body []byte, path string, sl *ShortLong, locationHeader string) {
 
-	file, err := os.OpenFile(filename, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666)
-	if err != nil {
-		log.Fatalf("ошибка <%v> открытия файла <%s>", err, filename)
+	// Проверка аргументов
+	if sl == nil {
+		log.Println("В аргументе sl, функции processingObserver, нет указателя.")
+		return
 	}
-	defer func() {
-		_ = file.Close()
-	}()
 
-	if _, err := file.WriteString(str + "\n"); err != nil {
-		log.Fatalf("ошибка <%v> записи в файл <%s>", err, filename)
+	// Логика
+	var dataBody string
+	var auditEvent observer.AuditEvent
+
+	switch path {
+	case "/":
+
+		dataBody = string(body)
+
+		auditEvent = observer.AuditEvent{
+			Timestamp: time.Now().Unix(),
+			Action:    shorten,
+			UserID:    "",
+			URL:       dataBody,
+		}
+	case "/api/shorten":
+
+		var dataBodyJSON rxLongURL
+
+		if err := json.Unmarshal(body, &dataBodyJSON); err != nil {
+			sl.Log.Error("Ошибка json.Unmarshal", zap.Error(err))
+			return
+		}
+		dataBody = dataBodyJSON.URL
+
+		auditEvent = observer.AuditEvent{
+			Timestamp: time.Now().Unix(),
+			Action:    shorten,
+			UserID:    "",
+			URL:       dataBody,
+		}
+
+	default: //`/{id}`.
+
+		auditEvent = observer.AuditEvent{
+			Timestamp: time.Now().Unix(),
+			Action:    follow,
+			UserID:    "",
+			URL:       locationHeader,
+		}
 	}
+
+	sl.Observer.Notify(auditEvent)
 }
-*/
