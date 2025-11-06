@@ -151,15 +151,19 @@ func server(params *paramsURL) error {
 func startUpHTTPServer(srv *http.Server, txErr chan error, log *zap.Logger) {
 
 	// Проверка параметров.
+	if txErr == nil {
+		log.Fatal("в функции startUpHTTPServer, в параметре txErr, нет указателя на канал")
+	}
+	if log == nil {
+		txErr <- errors.New("в параметре log, нет указателя")
+		return
+	}
 	if srv == nil {
 		txErr <- errors.New("в параметре srv, нет указателя")
 		return
 	}
-	if txErr == nil {
-		log.Fatal("В функции startUpHTTPServer, в параметре txErr, нет указателя на канал")
-		return
-	}
 
+	// Запуск
 	log.Info("Запуск сервера", zap.String("address", srv.Addr))
 
 	err := srv.ListenAndServe()
