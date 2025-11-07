@@ -9,6 +9,7 @@ import (
 )
 
 // Сообщение аудита.
+// generate:reset
 type AuditEvent struct {
 	Timestamp int64  `json:"ts"`                // unix timestamp события.
 	Action    string `json:"action"`            // действие: shorten (создание) или follow (прохождение по ссылке).

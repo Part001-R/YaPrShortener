@@ -9,6 +9,7 @@ import (
 )
 
 // Флаги сервиса.
+// generate:reset
 type Config struct {
 	ServerAddr       string
 	BaseAddrShortURL string

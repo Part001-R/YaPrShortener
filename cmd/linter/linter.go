@@ -15,18 +15,21 @@ var analyzer = &analysis.Analyzer{
 	Run:  run,
 }
 
-// run, реализаут фцнкционал анализа. Возвращает интерфейс и ошибку.
+// run, реализует функционал анализа. Возвращает интерфейс и ошибку.
 //
-// Параметеры:
+// Параметры:
 //
 //	pass - контекст анализа.
 func run(pass *analysis.Pass) (interface{}, error) {
+
 	for _, file := range pass.Files {
-		// Пропускаем файлы пакета main
+
+		// Пропуск файлов пакета main
 		if file.Name.Name == "main" {
 			continue
 		}
 
+		// Исследование
 		ast.Inspect(file, func(n ast.Node) bool {
 			callExpr, ok := n.(*ast.CallExpr)
 			if !ok {
@@ -56,11 +59,9 @@ func run(pass *analysis.Pass) (interface{}, error) {
 					}
 				}
 			}
-
 			return true
 		})
 	}
-
 	return nil, nil
 }
 
