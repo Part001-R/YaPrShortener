@@ -164,20 +164,23 @@ func resetField(sb *strings.Builder, fieldName string, fieldType ast.Expr) {
 		}
 	case *ast.StarExpr:
 		innerType, ok := t.X.(*ast.Ident)
-		if ok && (innerType.Name == "string" || innerType.Name == "int" ||
-			innerType.Name == "int64" || innerType.Name == "int32" ||
-			innerType.Name == "int16" || innerType.Name == "int8" ||
-			innerType.Name == "uint" || innerType.Name == "uint64" ||
-			innerType.Name == "uint32" || innerType.Name == "uint16" ||
-			innerType.Name == "uint8" || innerType.Name == "float32" ||
-			innerType.Name == "float64") {
-			sb.WriteString(fmt.Sprintf("    if rs.%s != nil {\n", fieldName))
-			sb.WriteString(fmt.Sprintf("        *rs.%s = \"\"\n", fieldName))
-			sb.WriteString("    }\n")
-		} else {
-			sb.WriteString(fmt.Sprintf("    if resetter, ok := rs.%s.(interface{ Reset() }); ok && rs.%s != nil {\n", fieldName, fieldName))
-			sb.WriteString("        resetter.Reset()\n")
-			sb.WriteString("    }\n")
+		if ok {
+			switch innerType.Name {
+			case "string":
+				sb.WriteString(fmt.Sprintf("    if rs.%s != nil {\n", fieldName))
+				sb.WriteString(fmt.Sprintf("        *rs.%s = \"\"\n", fieldName))
+				sb.WriteString("    }\n")
+			case "int", "int64", "int32", "int16", "int8",
+				"uint", "uint64", "uint32", "uint16", "uint8",
+				"float32", "float64":
+				sb.WriteString(fmt.Sprintf("    if rs.%s != nil {\n", fieldName))
+				sb.WriteString(fmt.Sprintf("        *rs.%s = 0\n", fieldName))
+				sb.WriteString("    }\n")
+			default:
+				sb.WriteString(fmt.Sprintf("    if resetter, ok := rs.%s.(interface{ Reset() }); ok && rs.%s != nil {\n", fieldName, fieldName))
+				sb.WriteString("        resetter.Reset()\n")
+				sb.WriteString("    }\n")
+			}
 		}
 	case *ast.ArrayType:
 		sb.WriteString(fmt.Sprintf("    rs.%s = rs.%s[:0]\n", fieldName, fieldName))
@@ -197,7 +200,7 @@ func resetField(sb *strings.Builder, fieldName string, fieldType ast.Expr) {
 //
 // Параметры:
 //
-//	expr - Интерфейс, представляющий тип выражения.
+//	expr - интерфейс, представляющий тип выражения.
 func formatType(expr ast.Expr) string {
 	switch t := expr.(type) {
 	case *ast.Ident:
