@@ -8,24 +8,25 @@ import (
 
 func Test_Pool_SUCCESS(t *testing.T) {
 
-	// Конструктор
-	examplePool := New[*ExampleType]()
+	// Конструктор.
+	pool := New[*ExampleType]()
 
 	// Добавление объекта в пул.
 	for i := 1; i <= 1; i++ {
 		obj := &ExampleType{Value: i}
-		examplePool.Put(obj)
+		pool.Put(obj)
 	}
 
-	// Получение объекта из пула
-	obj := examplePool.Get()
-	obj.Value = 111 // Присвоение значения объекту.
+	// Получение объекта из пула.
+	obj := pool.Get()
+	obj.Value = 111 // Присвоение значния, для отслеживания сброса.
 
-	// Возврат объекта в пул
-	examplePool.Put(obj)
+	// Возврат объекта в пул.
+	pool.Put(obj)
 
 	// Проверка содержимого объекта.
 	// Значение должны быть по умолчанию, т.к. есть сброс в Reset методе.
-	obj = examplePool.Get()
-	assert.Equalf(t, 0, obj.Value, "ожидался 0, а принято <%d>", obj.Value)
+	want := 0
+	obj = pool.Get()
+	assert.Equalf(t, want, obj.Value, "ожидался <%d>, а принято <%d>", want, obj.Value)
 }
