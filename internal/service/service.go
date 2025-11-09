@@ -401,3 +401,15 @@ func prepareObserver(flags config.Config, log *zap.Logger) (observer.Action, err
 
 	return obsSrc, nil
 }
+
+// GetValueOrDefault, реализует проверку значения аргумента. Возвращает строку.
+//
+// Параметры:
+//
+//	value - анализируемое значение.
+func GetValueOrDefault(value string) string {
+	if value == "" {
+		return "N/A"
+	}
+	return value
+}
