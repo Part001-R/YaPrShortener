@@ -11,7 +11,7 @@ type Resettable interface {
 
 // pool тип данных, представляющий хранилище объектов.
 type pool[T Resettable] struct {
-	mu   sync.Mutex
+	mu   sync.RWMutex
 	pool []T
 }
 
@@ -23,7 +23,7 @@ func New[T Resettable]() *pool[T] {
 
 	if registeredPool == nil {
 		registeredPool = &pool[T]{
-			mu:   sync.Mutex{},
+			mu:   sync.RWMutex{},
 			pool: []T{},
 		}
 	}
@@ -32,8 +32,8 @@ func New[T Resettable]() *pool[T] {
 
 // Get, извлекает объект из пула.
 func (p *pool[T]) Get() T {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 
 	if len(p.pool) == 0 {
 		var t T // Возврат нулевого значения типа T, если пул пуст.
@@ -52,8 +52,8 @@ func (p *pool[T]) Get() T {
 //
 //	obj - объект.
 func (p *pool[T]) Put(obj T) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 
 	obj.Reset()
 	p.pool = append(p.pool, obj)
