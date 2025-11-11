@@ -41,7 +41,7 @@ func Test_ParseFlags_SUCCESS(t *testing.T) {
 			os.Args = []string{tt.argCmd, tt.argA, tt.argB, tt.argL, tt.argF}
 
 			flags := ParseFlags()
-			assert.Equalf(t, tt.wantAddr, flags.ServerAddr, "ожидалось {%s}, а принято {%s}", tt.wantAddr, flags.ServerAddr)
+			assert.Equalf(t, tt.wantAddr, flags.Port, "ожидалось {%s}, а принято {%s}", tt.wantAddr, flags.Port)
 			assert.Equalf(t, tt.wantBase, flags.BaseAddrShortURL, "ожидалось {%s}, а принято {%s}", tt.wantAddr, flags.BaseAddrShortURL)
 			assert.Equalf(t, tt.wantLogLevel, flags.LogLevel, "ожидалось {%s}, а принято {%s}", tt.wantAddr, flags.LogLevel)
 			assert.Equalf(t, tt.wantFile, flags.FileStoragePath, "ожидалось {%s}, а принято {%s}", tt.wantFile, flags.FileStoragePath)

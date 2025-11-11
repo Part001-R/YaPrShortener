@@ -23,9 +23,17 @@ const head = "YaPrShortener"
 //
 // Параметры:
 //
-//		db - указатель на БД.
-//	 log - логгер.
+//	db - указатель на БД.
+//	log - логгер.
 func MigrationUpDB(db *sql.DB, log *zap.Logger) error {
+
+	// Проверка аргументов.
+	if db == nil {
+		return ErrNilDB
+	}
+	if log == nil {
+		return ErrNilLog
+	}
 
 	// Определение рабочей директории.
 	path, err := workDir()
@@ -52,10 +60,10 @@ func MigrationUpDB(db *sql.DB, log *zap.Logger) error {
 	// Применение миграций.
 	err = goose.Up(db, pathFilesMigration)
 	if err != nil {
-		log.Error("Ошибка применения миграции БД",
+		log.Error("Ошибка применения Up миграции БД",
 			zap.Error(err),
 		)
-		return fmt.Errorf("ошибка мри миграции БД")
+		return fmt.Errorf("ошибка применения Up миграции БД: <%w>", err)
 	}
 
 	return nil
@@ -101,7 +109,10 @@ func ConnectDB(dsn string, log *zap.Logger) (*sql.DB, func(), error) {
 
 	// Проверка аргументов.
 	if dsn == "" {
-		return nil, nil, fmt.Errorf("в аргументе dsn нет содержмиого")
+		return nil, nil, ErrEmptyDSN
+	}
+	if log == nil {
+		return nil, nil, ErrNilLog
 	}
 
 	// Подключение к БД.

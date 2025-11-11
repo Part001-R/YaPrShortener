@@ -9,8 +9,9 @@ import (
 )
 
 // Флаги сервиса.
+// generate:reset
 type Config struct {
-	ServerAddr       string
+	Port             string
 	BaseAddrShortURL string
 	LogLevel         string
 	FileStoragePath  string
@@ -30,7 +31,7 @@ func ParseFlags() Config {
 
 	once.Do(func() {
 
-		flag.StringVar(&flags.ServerAddr, "a", ":8080", "адрес и порт сервера")
+		flag.StringVar(&flags.Port, "a", ":8080", "адрес и порт сервера")
 		flag.StringVar(&flags.BaseAddrShortURL, "b", "http://localhost:8080/", "базовый адрес для коротких URL")
 		flag.StringVar(&flags.LogLevel, "l", "info", "уровень логирования")
 		flag.StringVar(&flags.FileStoragePath, "f", "storage.json", "хранилище ссылок")
@@ -41,7 +42,7 @@ func ParseFlags() Config {
 		flag.Parse()
 
 		if envValue := os.Getenv("SERVER_ADDRESS"); envValue != "" {
-			flags.ServerAddr = envValue
+			flags.Port = envValue
 		}
 		if envValue := os.Getenv("BASE_URL"); envValue != "" {
 			flags.BaseAddrShortURL = envValue

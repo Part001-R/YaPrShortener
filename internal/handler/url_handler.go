@@ -467,7 +467,7 @@ func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl flags.Config, os ob
 			DB:               db,
 			Observer:         os,
 			BaseAddrShortURL: fl.BaseAddrShortURL,
-			ServerAddr:       fl.ServerAddr,
+			ServerAddr:       fl.Port,
 			FileStoragePath:  fl.FileStoragePath,
 			Log:              log,
 		}

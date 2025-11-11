@@ -30,14 +30,14 @@ func InternalShortURLFromLongLayerRx(r *http.Request, logger *zap.Logger) (longU
 	// Проверка аргументов.
 	if logger == nil {
 		log.Println("В аргументе log, функции InternalShortURLFromLongLayerRx, нет указателя.")
-		return "", "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", "", ErrStatusInternalServerError
 	}
 	if r == nil {
-		logger.Error("в аргементе r нет указателя",
+		logger.Error("в аргументе r нет указателя",
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
-		return "", "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", "", ErrStatusInternalServerError
 	}
 
 	// Чтение тела запроса.
@@ -57,10 +57,10 @@ func InternalShortURLFromLongLayerRx(r *http.Request, logger *zap.Logger) (longU
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
-		return "", "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", "", ErrStatusInternalServerError
 	}
 	if len(rxData) == 0 {
-		return "", "", fmt.Errorf("%d", http.StatusBadRequest)
+		return "", "", ErrStatusBadRequest
 	}
 
 	// Результат.
@@ -83,11 +83,11 @@ func InternalShortURLFromLongLayerWork(db *sql.DB, sl *ShortLong, longURL, uuidR
 	// Проверка аргументов.
 	if sl == nil {
 		log.Println("В аргументе sl, функции InternalShortURLFromLongLayerWork, нет указателя")
-		return "", false, fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", false, ErrStatusInternalServerError
 	}
 	if longURL == "" {
 		sl.Log.Error("в аргементе longURL нет данных")
-		return "", false, fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", false, ErrStatusInternalServerError
 	}
 
 	// Логика.
@@ -102,9 +102,8 @@ func InternalShortURLFromLongLayerWork(db *sql.DB, sl *ShortLong, longURL, uuidR
 				zap.Error(err),
 				zap.String("longURL", longURL),
 			)
-			err = fmt.Errorf("%d", http.StatusInternalServerError)
 			flagConflict = false
-			return "", flagConflict, err
+			return "", flagConflict, ErrStatusInternalServerError
 		}
 
 		// Ответ.
@@ -119,9 +118,8 @@ func InternalShortURLFromLongLayerWork(db *sql.DB, sl *ShortLong, longURL, uuidR
 		sl.Log.Error("Ошибка в функции workWithRxData",
 			zap.Error(err),
 		)
-		err = fmt.Errorf("%d", http.StatusInternalServerError)
 		flagConflict = false
-		return "", flagConflict, err
+		return "", flagConflict, ErrStatusInternalServerError
 	}
 
 	// Ответ.
@@ -146,11 +144,11 @@ func InternalShortURLFromLongLayerTx(w http.ResponseWriter, str string, flagConf
 	// Проверка аргументов.
 	if w == nil {
 		logger.Error("в аргементе w нет указателя")
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 	if str == "" {
 		logger.Error("в аргементе str нет данных")
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 
 	// Логика.
@@ -183,13 +181,13 @@ func internalShortURLFromLongBatchLayerRx(r *http.Request, logger *zap.Logger) (
 	// Проверка аргументов.
 	if logger == nil {
 		log.Println("В аргументе logger, функции internalShortURLFromLongBatchLayerRx, нет указателя.")
-		return nil, "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return nil, "", ErrStatusInternalServerError
 	}
 	if r == nil {
 		logger.Error("Ошибка в internalShortURLFromLongBatchLayerRx",
 			zap.String("reason", "нет указателя на аргумент r"),
 		)
-		return nil, "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return nil, "", ErrStatusInternalServerError
 	}
 
 	// Чтение тела запроса.
@@ -210,7 +208,7 @@ func internalShortURLFromLongBatchLayerRx(r *http.Request, logger *zap.Logger) (
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
-		return nil, "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return nil, "", ErrStatusInternalServerError
 	}
 
 	// Десериализация принятых данных.
@@ -223,10 +221,10 @@ func internalShortURLFromLongBatchLayerRx(r *http.Request, logger *zap.Logger) (
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
-		return nil, "", fmt.Errorf("%d", http.StatusBadRequest)
+		return nil, "", ErrStatusBadRequest
 	}
 	if len(rxLongURLBatch) == 0 {
-		return nil, "", fmt.Errorf("%d", http.StatusBadRequest)
+		return nil, "", ErrStatusBadRequest
 	}
 
 	// Возврат.
@@ -249,15 +247,15 @@ func internalShortURLFromLongBatchLayerWork(db *sql.DB, sl *ShortLong, longBatch
 	// Проверка аргументов.
 	if sl == nil {
 		log.Println("в аргементе sl, функции internalShortURLFromLongBatchLayerWork, нет указателя")
-		return nil, fmt.Errorf("%d", http.StatusInternalServerError)
+		return nil, ErrStatusInternalServerError
 	}
 	if longBatch == nil {
 		sl.Log.Error("в аргементе longBatch нет указателя")
-		return nil, fmt.Errorf("%d", http.StatusInternalServerError)
+		return nil, ErrStatusInternalServerError
 	}
 	if len(longBatch) == 0 {
 		sl.Log.Error("в аргементе longBatch нет данных")
-		return nil, fmt.Errorf("%d", http.StatusInternalServerError)
+		return nil, ErrStatusInternalServerError
 	}
 
 	// Логика.
@@ -271,7 +269,7 @@ func internalShortURLFromLongBatchLayerWork(db *sql.DB, sl *ShortLong, longBatch
 			sl.Log.Error("Ошибка при сохранении в БД",
 				zap.Error(err),
 			)
-			return nil, fmt.Errorf("%d", http.StatusInternalServerError)
+			return nil, ErrStatusInternalServerError
 		}
 	}
 
@@ -282,7 +280,7 @@ func internalShortURLFromLongBatchLayerWork(db *sql.DB, sl *ShortLong, longBatch
 			sl.Log.Error("Ошибка при сохранении в мапы",
 				zap.Error(err),
 			)
-			return nil, fmt.Errorf("%d", http.StatusInternalServerError)
+			return nil, ErrStatusInternalServerError
 		}
 
 		err = storageFileURL(sl.FileStoragePath, sl.List.ShorByLong, sl.Log)
@@ -290,7 +288,7 @@ func internalShortURLFromLongBatchLayerWork(db *sql.DB, sl *ShortLong, longBatch
 			sl.Log.Error("Ошибка при сохранении в файл",
 				zap.Error(err),
 			)
-			return nil, fmt.Errorf("%d", http.StatusInternalServerError)
+			return nil, ErrStatusInternalServerError
 		}
 
 		batchShortURL, err = prapareBatchResponse(sl.List.LongByShort, longBatch, sl)
@@ -298,7 +296,7 @@ func internalShortURLFromLongBatchLayerWork(db *sql.DB, sl *ShortLong, longBatch
 			sl.Log.Error("Ошибка при подготовке ответного batch",
 				zap.Error(err),
 			)
-			return nil, fmt.Errorf("%d", http.StatusInternalServerError)
+			return nil, ErrStatusInternalServerError
 		}
 	}
 
@@ -318,15 +316,15 @@ func internalShortURLFromLongBatchLayerTx(w http.ResponseWriter, shortBatch []tx
 	// Проверка аргументов.
 	if w == nil {
 		logger.Error("в аргементе w нет указателя")
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 	if shortBatch == nil {
 		logger.Error("в аргементе shortBatch нет указателя")
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 	if len(shortBatch) == 0 {
 		logger.Error("в аргементе shortBatch нет данных")
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 
 	// Сериализация.
@@ -335,7 +333,7 @@ func internalShortURLFromLongBatchLayerTx(w http.ResponseWriter, shortBatch []tx
 		logger.Error("Ошибка при сериализации ответного batch",
 			zap.Error(err),
 		)
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 
 	// Ответ.
@@ -361,11 +359,11 @@ func internalShortURLFromLongJSONLayerRx(r *http.Request, logger *zap.Logger) (r
 	// Проверка аргументов.
 	if logger == nil {
 		log.Println("в аргументе logger, функции internalShortURLFromLongJSONLayerRx, нет указателя")
-		return rxLongURL{}, "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return rxLongURL{}, "", ErrStatusInternalServerError
 	}
 	if r == nil {
 		logger.Error("в аргументе r нет указателя")
-		return rxLongURL{}, "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return rxLongURL{}, "", ErrStatusInternalServerError
 	}
 
 	// Логика.
@@ -385,19 +383,19 @@ func internalShortURLFromLongJSONLayerRx(r *http.Request, logger *zap.Logger) (r
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
-		return rxLongURL{}, "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return rxLongURL{}, "", ErrStatusInternalServerError
 	}
 	if len(rxData) == 0 {
-		return rxLongURL{}, "", fmt.Errorf("%d", http.StatusBadRequest)
+		return rxLongURL{}, "", ErrStatusBadRequest
 	}
 
 	var rxJSON = rxLongURL{}
 	err = json.Unmarshal(rxData, &rxJSON)
 	if err != nil {
-		return rxLongURL{}, "", fmt.Errorf("%d", http.StatusBadRequest)
+		return rxLongURL{}, "", ErrStatusBadRequest
 	}
 	if rxJSON.URL == "" {
-		return rxLongURL{}, "", fmt.Errorf("%d", http.StatusBadRequest)
+		return rxLongURL{}, "", ErrStatusBadRequest
 	}
 
 	// Результат.
@@ -420,11 +418,11 @@ func internalShortURLFromLongJSONLayerWork(db *sql.DB, sl *ShortLong, rxJSON rxL
 	// Проверка аргументов.
 	if sl == nil {
 		log.Println("в аргементе sl, функции internalShortURLFromLongJSONLayerWork, нет указателя")
-		return "", false, fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", false, ErrStatusInternalServerError
 	}
 	if rxJSON.URL == "" {
 		sl.Log.Error("в аргементе rxJSON.URL нет данных")
-		return "", false, fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", false, ErrStatusInternalServerError
 	}
 
 	// Логика.
@@ -439,7 +437,7 @@ func internalShortURLFromLongJSONLayerWork(db *sql.DB, sl *ShortLong, rxJSON rxL
 				zap.Error(err),
 				zap.String("longURL", rxJSON.URL),
 			)
-			return "", false, fmt.Errorf("%d", http.StatusInternalServerError)
+			return "", false, ErrStatusInternalServerError
 		}
 
 		// Ответ.
@@ -467,15 +465,15 @@ func internalShortURLFromLongJSONLayerTx(w http.ResponseWriter, short string, fl
 	// Проверка аргументов.
 	if logger == nil {
 		log.Println("В аргументе logger, функции internalShortURLFromLongJSONLayerTx, нет указателя.")
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 	if w == nil {
 		logger.Error("в аргементе w нет указателя")
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 	if short == "" {
 		logger.Error("в аргементе short нет данных")
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 
 	// Логика.
@@ -487,7 +485,7 @@ func internalShortURLFromLongJSONLayerTx(w http.ResponseWriter, short string, fl
 		logger.Error("Ошибка сериализации данных",
 			zap.Error(err),
 		)
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 
 	// Ответ.
@@ -519,7 +517,7 @@ func internalUserURLsLayerWork(db *sql.DB, sl *ShortLong) ([]txShortURLOriginalU
 	// Проверка аргументов.
 	if sl == nil {
 		log.Printf("в аргементе sl, функции internalUserURLsLayerWork, нет указателя")
-		return nil, fmt.Errorf("%d", http.StatusInternalServerError)
+		return nil, ErrStatusInternalServerError
 	}
 
 	// Логика.
@@ -533,7 +531,7 @@ func internalUserURLsLayerWork(db *sql.DB, sl *ShortLong) ([]txShortURLOriginalU
 			sl.Log.Error("Ошибка в функции GetAllShortenerDB",
 				zap.Error(err),
 			)
-			return nil, fmt.Errorf("%d", http.StatusInternalServerError)
+			return nil, ErrStatusInternalServerError
 		}
 
 		for k, v := range shortLongDB {
@@ -547,7 +545,7 @@ func internalUserURLsLayerWork(db *sql.DB, sl *ShortLong) ([]txShortURLOriginalU
 			sl.Log.Error("Ошибка в функции ClearShortenerTable",
 				zap.Error(err),
 			)
-			return nil, fmt.Errorf("%d", http.StatusInternalServerError)
+			return nil, ErrStatusInternalServerError
 		}
 
 	}
@@ -580,11 +578,11 @@ func internalUserURLsLayerTx(w http.ResponseWriter, shortLong []txShortURLOrigin
 	// Проверка аргументов.
 	if logger == nil {
 		log.Println("в аргументе logger, функции internalUserURLsLayerTx, нет указателя")
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 	if w == nil {
 		logger.Error("в аргементе w нет указателя")
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 
 	// Логика.
@@ -607,7 +605,7 @@ func internalUserURLsLayerTx(w http.ResponseWriter, shortLong []txShortURLOrigin
 		logger.Error("Ошибка сериализации ответа",
 			zap.Error(err),
 		)
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 
 	// Ответ.
@@ -632,11 +630,11 @@ func internalDeleteUserURLsLayerRx(r *http.Request, logger *zap.Logger) (rxArr [
 	// Проверка аргументов.
 	if logger == nil {
 		log.Println("В аргументе logger, функции internalDeleteUserURLsLayerRx, нет указателя")
-		return nil, "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return nil, "", ErrStatusInternalServerError
 	}
 	if r == nil {
 		logger.Error("в аргументе r нет указателя")
-		return nil, "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return nil, "", ErrStatusInternalServerError
 	}
 
 	// Логика.
@@ -650,7 +648,7 @@ func internalDeleteUserURLsLayerRx(r *http.Request, logger *zap.Logger) (rxArr [
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
-		return nil, "", fmt.Errorf("%d", http.StatusBadRequest)
+		return nil, "", ErrStatusBadRequest
 	}
 	defer func() {
 		if err := r.Body.Close(); err != nil {
@@ -679,15 +677,15 @@ func internalDeleteUserURLsLayerWork(db *sql.DB, sl *ShortLong, rxData []string,
 	// Проверка аргументов.
 	if sl == nil {
 		log.Println("В аргументе sl, функции internalDeleteUserURLsLayerWork, нет указателя")
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 	if rxData == nil {
 		sl.Log.Error("в аргументе rxData нет указателя")
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 	if len(rxData) == 0 {
 		sl.Log.Error("в аргументе rxData нет данных")
-		return fmt.Errorf("%d", http.StatusBadRequest)
+		return ErrStatusBadRequest
 	}
 
 	// Логика.
@@ -695,7 +693,7 @@ func internalDeleteUserURLsLayerWork(db *sql.DB, sl *ShortLong, rxData []string,
 		sl.Log.Error("Ошибка при обновлении значения флагов daleteFlag",
 			zap.Error(err),
 		)
-		return fmt.Errorf("%d", http.StatusInternalServerError)
+		return ErrStatusInternalServerError
 	}
 
 	return nil
@@ -726,17 +724,17 @@ func internalLongURLFromShortLayerRx(r *http.Request, logger *zap.Logger) (strin
 	// Проверка аргументов.
 	if logger == nil {
 		log.Println("В аргументе logger, функции internalLongURLFromShortLayerRx, нет указателя.")
-		return "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", ErrStatusInternalServerError
 	}
 	if r == nil {
 		logger.Error("в аргументе r нет указателя")
-		return "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", ErrStatusInternalServerError
 	}
 
 	// Логика.
 	rxData := r.URL.Path[1:]
 	if len(rxData) == 0 {
-		return "", fmt.Errorf("%d", http.StatusBadRequest)
+		return "", ErrStatusBadRequest
 	}
 
 	// Возврат.
@@ -755,11 +753,11 @@ func internalLongURLFromShortLayerWork(db *sql.DB, sl *ShortLong, short string) 
 	// Проверка аргументов.
 	if sl == nil {
 		log.Println("в аргументе sl, функции internalLongURLFromShortLayerWork, нет указателя")
-		return "", fmt.Errorf("%d", http.StatusInternalServerError)
+		return "", ErrStatusInternalServerError
 	}
 	if short == "" {
 		sl.Log.Error("в аргументе rxData нет данных")
-		return "", fmt.Errorf("%d", http.StatusBadRequest)
+		return "", ErrStatusBadRequest
 	}
 
 	// Логика.
@@ -773,17 +771,17 @@ func internalLongURLFromShortLayerWork(db *sql.DB, sl *ShortLong, short string) 
 
 		long, err = readLongAndFlagByShortDB(db, short)
 		if err != nil && err.Error() == myErr {
-			return "", fmt.Errorf("%d", http.StatusNotFound) // Если запись в БД нет.
+			return "", ErrStatusNotFound // Если запись в БД нет.
 		}
 		if err != nil {
 			sl.Log.Error("Ошибка в функции readLongAndFlagByShortDB",
 				zap.Error(err),
 			)
-			return "", fmt.Errorf("%d", http.StatusInternalServerError)
+			return "", ErrStatusInternalServerError
 		}
 
 		if long == "" {
-			return "", fmt.Errorf("%d", http.StatusGone) // Если запись есть, но взведён флаг deleteflag.
+			return "", ErrStatusGone // Если запись есть, но взведён флаг deleteflag.
 		}
 	}
 
@@ -792,7 +790,7 @@ func internalLongURLFromShortLayerWork(db *sql.DB, sl *ShortLong, short string) 
 		long, ok = sl.List.LongByShort[short]
 		if !ok {
 			sl.Log.Error("в аргументе rxData нет данных")
-			return "", fmt.Errorf("%d", http.StatusBadRequest)
+			return "", ErrStatusBadRequest
 		}
 		long = strings.Trim(long, "\"")
 	}

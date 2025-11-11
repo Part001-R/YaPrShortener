@@ -3,7 +3,6 @@ package service
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -121,7 +120,7 @@ func server(params *paramsURL) error {
 
 	// Проверка аргументов.
 	if params == nil {
-		return errors.New("ошибка в функции server: в параметре params, нет указателя")
+		return ErrNilParams
 	}
 
 	cr := chi.NewRouter()
@@ -151,15 +150,19 @@ func server(params *paramsURL) error {
 func startUpHTTPServer(srv *http.Server, txErr chan error, log *zap.Logger) {
 
 	// Проверка параметров.
-	if srv == nil {
-		txErr <- errors.New("в параметре srv, нет указателя")
+	if txErr == nil {
+		log.Fatal("в функции startUpHTTPServer, в параметре txErr, нет указателя на канал")
+	}
+	if log == nil {
+		txErr <- ErrNilLog
 		return
 	}
-	if txErr == nil {
-		log.Fatal("В функции startUpHTTPServer, в параметре txErr, нет указателя на канал")
+	if srv == nil {
+		txErr <- ErrNilSrv
 		return
 	}
 
+	// Запуск
 	log.Info("Запуск сервера", zap.String("address", srv.Addr))
 
 	err := srv.ListenAndServe()
@@ -173,8 +176,8 @@ func startUpHTTPServer(srv *http.Server, txErr chan error, log *zap.Logger) {
 //
 // Параметры:
 //
-//		data - набор данных для обеспечения работы функции.
-//	 log - логгер.
+//	data - набор данных для обеспечения работы функции.
+//	log - логгер.
 func signalsStopRun(data *checkReasonStop, log *zap.Logger) error {
 
 	// Отложенное закрытие базы данных.
@@ -184,24 +187,27 @@ func signalsStopRun(data *checkReasonStop, log *zap.Logger) error {
 		}
 	}()
 
-	// Проверка аргумента.
+	// Проверка аргументов.
+	if log == nil {
+		return ErrNilLog
+	}
 	if data == nil {
-		return errors.New("ошибка в signalsStopRun: data не инициализирован")
+		return ErrNilData
 	}
 	if data.sigSys == nil {
-		return errors.New("ошибка в signalsStopRun: канал sigSys не инициализирован")
+		return ErrNilDataSigSys
 	}
 	if data.chSrvErr == nil {
-		return errors.New("ошибка в signalsStopRun: канал chSrvErr не инициализирован")
+		return ErrNilDataChSrvErr
 	}
 	if data.chStorageErr == nil {
-		return errors.New("ошибка в signalsStopRun: канал chStorageErr не инициализирован")
+		return ErrNilDataChStorageErr
 	}
 	if data.srvConf == nil {
-		return errors.New("ошибка в signalsStopRun: srvConf не инициализирована")
+		return ErrNilDataSrvConf
 	}
 	if data.params == nil {
-		return errors.New("ошибка в signalsStopRun: params не инициализированы")
+		return ErrNilDataParams
 	}
 
 	// Логика.
@@ -228,14 +234,20 @@ func actions(params *paramsURL, cr *chi.Mux) error {
 
 	// Проверка аргументов.
 	if params == nil {
-		return errors.New("ошибка в функции actions: нет указателя на params")
+		return ErrNilParams
+	}
+	if params.shortLongDB == nil {
+		return ErrNilParamsSrortLongDB
+	}
+	if params.log == nil {
+		return ErrNilParamsLog
 	}
 	if cr == nil {
-		return errors.New("ошибка в функции actions: нет указателя на cr")
+		return ErrNilCr
 	}
 
 	srvConf := &http.Server{
-		Addr:    params.flags.ServerAddr,
+		Addr:    params.flags.Port,
 		Handler: cr,
 	}
 
@@ -274,35 +286,35 @@ func actions(params *paramsURL, cr *chi.Mux) error {
 // Параметры:
 //
 //	cr - роутер.
-//	р - параметры для работы.
-func handlersShortener(cr *chi.Mux, p *paramsURL) error {
+//	рarams - параметры для работы.
+func handlersShortener(cr *chi.Mux, params *paramsURL) error {
 
 	// Проверка аргументов.
 	if cr == nil {
-		return errors.New("ошибка в handlersShortener: в аргументе cr нет указателя")
+		return ErrNilCr
 	}
-	if p == nil {
-		return errors.New("ошибка в handlersShortener: в аргументе p нет указателя")
+	if params == nil {
+		return ErrNilParams
 	}
 
 	// Без аудита.
 	cr.Group(func(r chi.Router) {
-		r.Use(p.storageLongShort.Middleware)
+		r.Use(params.storageLongShort.Middleware)
 
-		r.Get("/ping", http.HandlerFunc(p.storageLongShort.PingDB))
-		r.Post("/api/shorten/batch", http.HandlerFunc(p.storageLongShort.ShortURLFromLongBatch))
-		r.Get("/api/user/urls", http.HandlerFunc(p.storageLongShort.UserURLs))
-		r.Delete("/api/user/urls", http.HandlerFunc(p.storageLongShort.DeleteUserURLs))
+		r.Get("/ping", http.HandlerFunc(params.storageLongShort.PingDB))
+		r.Post("/api/shorten/batch", http.HandlerFunc(params.storageLongShort.ShortURLFromLongBatch))
+		r.Get("/api/user/urls", http.HandlerFunc(params.storageLongShort.UserURLs))
+		r.Delete("/api/user/urls", http.HandlerFunc(params.storageLongShort.DeleteUserURLs))
 	})
 
 	// Аудит.
 	cr.Group(func(r chi.Router) {
-		r.Use(p.storageLongShort.MiddlewareAudit)
-		r.Use(p.storageLongShort.Middleware)
+		r.Use(params.storageLongShort.MiddlewareAudit)
+		r.Use(params.storageLongShort.Middleware)
 
-		r.Post("/", http.HandlerFunc(p.storageLongShort.ShortURLFromLong))
-		r.Post("/api/shorten", http.HandlerFunc(p.storageLongShort.ShortURLFromLongJSON))
-		r.Get("/{id}", http.HandlerFunc(p.storageLongShort.LongURLFromShort))
+		r.Post("/", http.HandlerFunc(params.storageLongShort.ShortURLFromLong))
+		r.Post("/api/shorten", http.HandlerFunc(params.storageLongShort.ShortURLFromLongJSON))
+		r.Get("/{id}", http.HandlerFunc(params.storageLongShort.LongURLFromShort))
 	})
 
 	return nil
@@ -312,10 +324,10 @@ func handlersShortener(cr *chi.Mux, p *paramsURL) error {
 //
 // Параметры:
 //
-//		db - указатель на БД.
-//		rxChForDelete - канал для приёма информации по удаляемой строке.
-//		rxChDoDelete - канал для приёма признака завершения накопления и запуска очистки таблицы.
-//	 log - логгер.
+//	db - указатель на БД.
+//	rxChForDelete - канал для приёма информации по удаляемой строке.
+//	rxChDoDelete - канал для приёма признака завершения накопления и запуска очистки таблицы.
+//	log - логгер.
 func asynClearShortenerTableDB(db *sql.DB, rxChForDelete chan handler.DeleteDB, rxChDoDelete chan struct{}, log *zap.Logger) {
 
 	rxMarkData := make([]handler.DeleteDB, 0)
@@ -377,6 +389,12 @@ func asynClearShortenerTableDB(db *sql.DB, rxChForDelete chan handler.DeleteDB, 
 //	log - логгер.
 func prepareObserver(flags config.Config, log *zap.Logger) (observer.Action, error) {
 
+	// Проверка аргументов.
+	if log == nil {
+		return nil, ErrNilLog
+	}
+
+	// Логика.
 	obsSrc := observer.NewObserver(log)
 
 	// Добавление аудитора - файл.
@@ -396,4 +414,16 @@ func prepareObserver(flags config.Config, log *zap.Logger) (observer.Action, err
 	}
 
 	return obsSrc, nil
+}
+
+// GetValueOrDefault, реализует проверку значения аргумента. Возвращает строку.
+//
+// Параметры:
+//
+//	value - анализируемое значение.
+func GetValueOrDefault(value string) string {
+	if value == "" {
+		return "N/A"
+	}
+	return value
 }

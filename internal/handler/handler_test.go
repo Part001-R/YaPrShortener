@@ -1946,7 +1946,9 @@ func Benchmark_InternalDeleteUserURLs_SUCCESS(b *testing.B) {
 		}
 	}
 	// Запуск профилирования памяти в конце теста
-	closeFileMem := profile.Memory()
+	closeFileMem, err := profile.Memory(log)
+	require.NoErrorf(b, err, "неожиданная ошибка запуске профилирования: <%v>", err)
+
 	err = closeFileMem()
 	require.NoErrorf(b, err, "неожиданная ошибка при закрытии файла профилирования памяти: <%v>", err)
 }

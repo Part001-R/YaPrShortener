@@ -5,10 +5,12 @@
 package profile
 
 import (
-	"log"
+	"fmt"
 	"os"
 	"runtime"
 	"runtime/pprof"
+
+	"go.uber.org/zap"
 )
 
 const (
@@ -16,51 +18,62 @@ const (
 	memProfileName = `mem.profile`
 )
 
-// Сбор профиля CPU.
-func CPU() (fileCPU func() error, pprofCPU func()) {
+// CPU, реализует сбор профиля CPU. Возвращается функция с закрытием подключения к файлу, функция остановки профилирования и ошибка.
+//
+// Параметры:
+//
+//	logger - логгер.
+func CPU(logger *zap.Logger) (closeFileCPU func() error, stopPprofCPU func(), err error) {
 
 	// Файл для записи данных.
 	fcpu, err := os.Create(cpuProfileName)
 	if err != nil {
-		panic(err)
+		return nil, nil, fmt.Errorf("ошибка создания файла профилирования CPU: <%w>", err)
 	}
-	fileCPU = func() error {
+	closeFileCPU = func() error {
 		return fcpu.Close()
 	}
 
 	// Сбор профиля.
 	if err := pprof.StartCPUProfile(fcpu); err != nil {
 		if ferr := fcpu.Close(); ferr != nil {
-			panic(err)
+			return nil, nil, fmt.Errorf("ошибка закрытия подключения к файлу: <%w>, при ошибке запуска профилирования CPU: <%w>", err, ferr)
 		}
-		panic(err)
+		return nil, nil, fmt.Errorf("ошибка запуска профилирования CPU: <%w>", err)
 	}
-	pprofCPU = func() {
+	stopPprofCPU = func() {
 		pprof.StopCPUProfile()
 	}
 
-	log.Println("Профилирование CPU запущено")
-	return
+	logger.Info("Прифилирование CPU запущено")
+	return closeFileCPU, stopPprofCPU, nil
 }
 
-// Сбор профиля памяти.
-func Memory() (fileMem func() error) {
+// Memory, реализует сбор профиля памяти. Возвращается функция с закрытием подключения к файлу и ошибка.
+//
+// Параметры:
+//
+//	logger - логгер.
+func Memory(logger *zap.Logger) (closeFileMem func() error, err error) {
 
 	// Файл для записи данных.
 	fmem, err := os.Create(memProfileName)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("ошибка создания файла профилирования CPU: <%w>", err)
 	}
-	fileMem = func() error {
+	closeFileMem = func() error {
 		return fmem.Close()
 	}
 
 	// Сбор профиля.
 	runtime.GC()
 	if err := pprof.WriteHeapProfile(fmem); err != nil {
-		panic(err)
+		if ferr := fmem.Close(); ferr != nil {
+			return nil, fmt.Errorf("ошибка закрытия подключения к файлу: <%w>, при ошибке запуска профилирования памяти: <%w>", err, ferr)
+		}
+		return nil, fmt.Errorf("ошибка запуска профилирования памяти: <%w>", err)
 	}
 
-	log.Println("Профилирование памяти запущено")
-	return
+	logger.Info("Профилирование памяти запущено")
+	return closeFileMem, nil
 }
