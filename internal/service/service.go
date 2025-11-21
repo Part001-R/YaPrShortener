@@ -3,6 +3,7 @@ package service
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/Part001-R/YaPrShortener/internal/service/observer"
 	"github.com/Part001-R/YaPrShortener/internal/service/observer/observerfile"
 	"github.com/Part001-R/YaPrShortener/internal/service/observer/observerurl"
+	"github.com/Part001-R/YaPrShortener/internal/service/sertificat/serthttps"
 	"github.com/go-chi/chi"
 	"go.uber.org/zap"
 )
@@ -37,6 +39,14 @@ type checkReasonStop struct {
 	srvConf      *http.Server
 	params       *paramsURL
 }
+
+const (
+	errDirIsEmpty      = "в аргументе dir, нет содержимого"
+	errNamePubIsEmpty  = "в аргументе namePub, нет содержимого"
+	errNamePrivIsEmpty = "в аргументе namePriv, нет содержимого"
+	namePublicKey      = "publicKey.pem"
+	namePrivateKey     = "privateKey.pem"
+)
 
 // Run содержит подготовительные действия и серверную часть. Возвращает ошибку.
 func Run() error {
@@ -163,9 +173,59 @@ func startUpHTTPServer(srv *http.Server, txErr chan error, log *zap.Logger) {
 	}
 
 	// Запуск
-	log.Info("Запуск сервера", zap.String("address", srv.Addr))
+	log.Info("Запуск HTTP сервера", zap.String("address", srv.Addr))
 
 	err := srv.ListenAndServe()
+	if err != nil && err != http.ErrServerClosed {
+		log.Error("Ошибка при запуске сервера", zap.Error(err))
+	}
+	txErr <- err
+}
+
+// startUpHTTPSServer выполняет запуск HTTP сервера.
+//
+// Парметры:
+//
+//	srv - настройки сервера.
+//	txErr - канал для возврата ошибки.
+//	log - логгер.
+func startUpHTTPSServer(srv *http.Server, txErr chan error, log *zap.Logger) {
+
+	// Проверка параметров.
+	if txErr == nil {
+		log.Fatal("в функции startUpHTTPSServer, в параметре txErr, нет указателя на канал")
+	}
+	if log == nil {
+		txErr <- ErrNilLog
+		return
+	}
+	if srv == nil {
+		txErr <- ErrNilSrv
+		return
+	}
+
+	// Проверка существования сертификатов
+	dir, err := os.Getwd()
+	if err != nil {
+		txErr <- fmt.Errorf("ошибка определения рабочей директории: <%v>", err)
+	}
+
+	ok, err := serthttps.CheckExistFiles(dir, namePublicKey, namePrivateKey)
+	if err != nil {
+		txErr <- fmt.Errorf("ошибка при проверку существования сертификатов: <%w>", err)
+		return
+	}
+	if !ok {
+		txErr <- errors.New("нет HTTPS сертификатов")
+		return
+	}
+
+	pathPubKey := dir + "/" + namePublicKey
+	pathPrivKey := dir + "/" + namePrivateKey
+	// Запуск
+	log.Info("Запуск HTTPS сервера", zap.String("address", srv.Addr))
+
+	err = srv.ListenAndServeTLS(pathPubKey, pathPrivKey)
 	if err != nil && err != http.ErrServerClosed {
 		log.Error("Ошибка при запуске сервера", zap.Error(err))
 	}
@@ -267,7 +327,11 @@ func actions(params *paramsURL, cr *chi.Mux) error {
 	}
 
 	// Запуск сервера.
-	go startUpHTTPServer(srvConf, chSrvErr, params.log)
+	if params.flags.EnableHTTPS == "true" {
+		go startUpHTTPSServer(srvConf, chSrvErr, params.log)
+	} else {
+		go startUpHTTPServer(srvConf, chSrvErr, params.log)
+	}
 
 	// Запуск обработчика асинхронной очистки таблицы shortener БД.
 	go asynClearShortenerTableDB(params.shortLongDB.Ptr, params.shortLongDB.ChForDelete, params.shortLongDB.ChDoDelete, params.log)

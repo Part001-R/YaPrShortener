@@ -18,6 +18,7 @@ type Config struct {
 	AuditFile        string
 	AuditURL         string
 	DSNDB            string
+	EnableHTTPS      string
 }
 
 // Обеспечение однократного выполнения.
@@ -38,6 +39,7 @@ func ParseFlags() Config {
 		flag.StringVar(&flags.DSNDB, "d", "", "dsn подключения к БД")
 		flag.StringVar(&flags.AuditFile, "audit-file", "", "путь к файлу-приёмнику")
 		flag.StringVar(&flags.AuditURL, "audit-url", "", "URL удаленного сервера-приёмника")
+		flag.StringVar(&flags.EnableHTTPS, "s", "false", "разрешение на запуск HTTPS")
 
 		flag.Parse()
 
@@ -61,6 +63,9 @@ func ParseFlags() Config {
 		}
 		if envValue := os.Getenv("AUDIT_URL"); envValue != "" {
 			flags.AuditURL = envValue
+		}
+		if envValue := os.Getenv("ENABLE_HTTPS"); envValue != "" {
+			flags.EnableHTTPS = envValue
 		}
 	})
 
