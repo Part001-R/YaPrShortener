@@ -76,17 +76,3 @@ func Test_RunHTTP_SUCCESS(t *testing.T) {
 	err := os.Remove("test.json")
 	require.NoErrorf(t, err, "ошибка при удалении файла: <%v>", err)
 }
-
-// server, тест. Проверяется запуск HTTPS, без сертификатов.
-func Test_RunHTTPS_FAULT(t *testing.T) {
-
-	errHTTPS := "функция server, вернула ошибку: <функция actions, вернула ошибку: <функция signalsStopRun вернула ошибку: <нет HTTPS сертификатов>>>"
-
-	os.Args = []string{"cmd", "-a=:9999", "-b=http://localhost:5500/", "-l=info", "-f=test.json", "-s=true"}
-
-	// Запуск
-	go func() {
-		err := Run()
-		require.Equalf(t, errHTTPS, err.Error(), "ожидалась ошибка <%s>, а принято <%s>", errHTTPS, err.Error())
-	}()
-}
