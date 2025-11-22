@@ -41,11 +41,8 @@ type checkReasonStop struct {
 }
 
 const (
-	errDirIsEmpty      = "в аргументе dir, нет содержимого"
-	errNamePubIsEmpty  = "в аргументе namePub, нет содержимого"
-	errNamePrivIsEmpty = "в аргументе namePriv, нет содержимого"
-	namePublicKey      = "publicKey.pem"
-	namePrivateKey     = "privateKey.pem"
+	namePublicKey  = "publicKey.pem"
+	namePrivateKey = "privateKey.pem"
 )
 
 // Run содержит подготовительные действия и серверную часть. Возвращает ошибку.
