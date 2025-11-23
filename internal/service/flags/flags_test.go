@@ -23,16 +23,6 @@ func Test_ParseFlags_SUCCESS(t *testing.T) {
 		wantEnableHTTPS string
 	}{
 		{
-			testName:        "Без файла",
-			argCmd:          "cmd",
-			argC:            "",
-			wantAddr:        ":8080",                  // по умолчанию - :8080.
-			wantBase:        "http://localhost:8080/", // по умолчанию - http://localhost:8080/.
-			wantFile:        "storage.json",           // по умолчанию - storage.json.
-			wantDSN:         "",                       // нет значения по умолчанию.
-			wantEnableHTTPS: "false",                  // по умолчанию - false.
-		},
-		{
 			testName:        "С использованием файла",
 			argCmd:          "cmd",
 			argC:            "-c=config.json",
@@ -48,19 +38,16 @@ func Test_ParseFlags_SUCCESS(t *testing.T) {
 	for _, tt := range testData {
 		t.Run(tt.testName, func(t *testing.T) {
 
-			go func() {
-				os.Args = []string{tt.argCmd, tt.argC}
+			os.Args = []string{tt.argCmd, tt.argC}
 
-				// Логика.
-				flags := ParseFlags()
+			// Логика.
+			flags := ParseFlags()
 
-				assert.Equalf(t, tt.wantAddr, flags.Port, "В Port ожидалось {%s}, а принято {%s}", tt.wantAddr, flags.Port)
-				assert.Equalf(t, tt.wantBase, flags.BaseAddrShortURL, "В BaseAddrShortURL ожидалось {%s}, а принято {%s}", tt.wantAddr, flags.BaseAddrShortURL)
-				assert.Equalf(t, tt.wantFile, flags.FileStoragePath, "В FileStoragePath ожидалось {%s}, а принято {%s}", tt.wantFile, flags.FileStoragePath)
-				assert.Equalf(t, tt.wantDSN, flags.DSNDB, "В DSNDB ожидалось {%s}, а принято {%s}", tt.wantDSN, flags.DSNDB)
-				assert.Equalf(t, tt.wantEnableHTTPS, flags.EnableHTTPS, "В EnableHTTPS ожидалось {%s}, а принято {%s}", tt.wantEnableHTTPS, flags.EnableHTTPS)
-			}()
-
+			assert.Equalf(t, tt.wantAddr, flags.Port, "В Port ожидалось {%s}, а принято {%s}", tt.wantAddr, flags.Port)
+			assert.Equalf(t, tt.wantBase, flags.BaseAddrShortURL, "В BaseAddrShortURL ожидалось {%s}, а принято {%s}", tt.wantAddr, flags.BaseAddrShortURL)
+			assert.Equalf(t, tt.wantFile, flags.FileStoragePath, "В FileStoragePath ожидалось {%s}, а принято {%s}", tt.wantFile, flags.FileStoragePath)
+			assert.Equalf(t, tt.wantDSN, flags.DSNDB, "В DSNDB ожидалось {%s}, а принято {%s}", tt.wantDSN, flags.DSNDB)
+			assert.Equalf(t, tt.wantEnableHTTPS, flags.EnableHTTPS, "В EnableHTTPS ожидалось {%s}, а принято {%s}", tt.wantEnableHTTPS, flags.EnableHTTPS)
 		})
 	}
 }

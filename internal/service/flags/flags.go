@@ -43,7 +43,7 @@ var once sync.Once
 var flags = Config{}
 
 // Реализация парсинга флагов. Возвращаются флаги.
-func ParseFlags() Config {
+func ParseFlags() *Config {
 
 	once.Do(func() {
 
@@ -70,7 +70,7 @@ func ParseFlags() Config {
 		}
 	})
 
-	return flags
+	return &flags
 }
 
 // readConfigFile, функция выполняет чтение конфигурационного файла. Возвращает json и ошибку.

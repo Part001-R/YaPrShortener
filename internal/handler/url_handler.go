@@ -460,7 +460,7 @@ var OnceShortener sync.Once
 //	fl - флаги.
 //	os - наблюдатель.
 //	log - логгер.
-func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl flags.Config, os observer.Action, log *zap.Logger) Actions {
+func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os observer.Action, log *zap.Logger) Actions {
 	OnceShortener.Do(func() {
 		shortener = &ShortLong{
 			List:             storage,
