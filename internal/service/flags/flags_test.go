@@ -47,8 +47,11 @@ func Test_ParseFlags_SUCCESS(t *testing.T) {
 	for _, tt := range testData {
 		t.Run(tt.testName, func(t *testing.T) {
 
-			os.Args = []string{tt.argCmd, tt.argA, tt.argB, tt.argL, tt.argF, tt.argS}
+			// Взаимодействие с аргументами.
+			teardown := setup([]string{tt.argCmd, tt.argA, tt.argB, tt.argL, tt.argF, tt.argS})
+			defer teardown()
 
+			// Логика.
 			flags := ParseFlags()
 			assert.Equalf(t, tt.wantAddr, flags.Port, "ожидалось {%s}, а принято {%s}", tt.wantAddr, flags.Port)
 			assert.Equalf(t, tt.wantBase, flags.BaseAddrShortURL, "ожидалось {%s}, а принято {%s}", tt.wantAddr, flags.BaseAddrShortURL)
@@ -99,8 +102,11 @@ func Test_ParseFlags_UseFile_Over_SUCCESS(t *testing.T) {
 	for _, tt := range testData {
 		t.Run(tt.testName, func(t *testing.T) {
 
-			os.Args = []string{tt.argCmd, tt.argA, tt.argB, tt.argL, tt.argF, tt.argS, tt.argC}
+			// Взаимодействие с аргументами.
+			teardown := setup([]string{tt.argCmd, tt.argA, tt.argB, tt.argL, tt.argF, tt.argS, tt.argC})
+			defer teardown()
 
+			// Логика.
 			flags := ParseFlags()
 			assert.Equalf(t, tt.wantAddr, flags.Port, "В Port ожидалось {%s}, а принято {%s}", tt.wantAddr, flags.Port)
 			assert.Equalf(t, tt.wantBase, flags.BaseAddrShortURL, "В BaseAddrShortURL ожидалось {%s}, а принято {%s}", tt.wantAddr, flags.BaseAddrShortURL)
@@ -139,8 +145,11 @@ func Test_ParseFlags_UseFile_PartOver_SUCCESS(t *testing.T) {
 	for _, tt := range testData {
 		t.Run(tt.testName, func(t *testing.T) {
 
-			os.Args = []string{tt.argCmd, tt.argC}
+			// Взаимодействие с аргументами.
+			teardown := setup([]string{tt.argCmd, tt.argC})
+			defer teardown()
 
+			// Логика.
 			flags := ParseFlags()
 			assert.Equalf(t, tt.wantAddr, flags.Port, "В Port ожидалось {%s}, а принято {%s}", tt.wantAddr, flags.Port)
 			assert.Equalf(t, tt.wantBase, flags.BaseAddrShortURL, "В BaseAddrShortURL ожидалось {%s}, а принято {%s}", tt.wantAddr, flags.BaseAddrShortURL)
@@ -164,4 +173,13 @@ func Test_readConfigFile_SUCCESS(t *testing.T) {
 	assert.Equalf(t, "storage.json", conf.FileStoragePath, "у storage.json, ожидалось <%s> а принято <%s>", "storage.json", conf.FileStoragePath)
 	assert.Equalf(t, "TestDSN", conf.DSNDB, "у database_dsn, ожидалось <%s> а принято <%s>", "TestDSN", conf.DSNDB)
 	assert.Equalf(t, true, conf.EnableHTTPS, "у enable_https, ожидалось <%t> а принято <%t>", true, conf.EnableHTTPS)
+}
+
+// setup, производит установку значений аргументов. Возвращает функцию с возвратом аргументов в исходное состояние.
+func setup(osArgs []string) func() {
+	originalArgs := os.Args
+	os.Args = osArgs
+	return func() {
+		os.Args = originalArgs
+	}
 }
