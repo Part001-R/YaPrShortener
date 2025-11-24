@@ -62,6 +62,9 @@ type ShortLong struct {
 	ServerAddr       string
 	FileStoragePath  string
 	Log              *zap.Logger
+	wg               sync.WaitGroup // учёт активности обработчиков запросов и асинхронного удаления.
+	stopping         bool           // true - признак, что сервис в процессе остановки.
+
 }
 
 // Для передачи содержимого файла в память.
@@ -110,6 +113,11 @@ type handlers interface {
 
 type systemAct interface {
 	PingDB(w http.ResponseWriter, r *http.Request)
+	WaitFinActions()
+	SetFlagStopping()
+	AsyncDeleteWGAdd()
+	AsyncDeleteWGDone()
+	IsFlagStopping() bool
 }
 
 type file interface {
@@ -225,6 +233,15 @@ func (sl *ShortLong) Middleware(h http.Handler) http.Handler {
 func (sl *ShortLong) MiddlewareAudit(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
+		// Проверка, что сервер в состоянии остановки.
+		if sl.stopping {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("Сервер временно недоступен"))
+			return
+		}
+
+		// Логика
+		//
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			sl.Log.Error("Ошибка при чтении тела запроса", zap.Error(err))
@@ -262,6 +279,9 @@ func (sl *ShortLong) ShortURLFromLong(w http.ResponseWriter, r *http.Request) {
 	sl.List.mu.RLock()
 	defer sl.List.mu.RUnlock()
 
+	sl.wg.Add(1)
+	defer sl.wg.Done()
+
 	sl.BaseAddrShortURL = strings.TrimSuffix(sl.BaseAddrShortURL, "/")
 	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
 
@@ -274,6 +294,9 @@ func (sl *ShortLong) ShortURLFromLongBatch(w http.ResponseWriter, r *http.Reques
 
 	sl.DB.mu.RLock()
 	defer sl.DB.mu.RUnlock()
+
+	sl.wg.Add(1)
+	defer sl.wg.Done()
 
 	sl.BaseAddrShortURL = strings.TrimSuffix(sl.BaseAddrShortURL, "/")
 	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
@@ -288,6 +311,9 @@ func (sl *ShortLong) LongURLFromShort(w http.ResponseWriter, r *http.Request) {
 	sl.List.mu.RLock()
 	defer sl.List.mu.RUnlock()
 
+	sl.wg.Add(1)
+	defer sl.wg.Done()
+
 	internalLongURLFromShort(sl.DB.Ptr, sl, w, r)
 }
 
@@ -296,6 +322,9 @@ func (sl *ShortLong) ShortURLFromLongJSON(w http.ResponseWriter, r *http.Request
 
 	sl.List.mu.RLock()
 	defer sl.List.mu.RUnlock()
+
+	sl.wg.Add(1)
+	defer sl.wg.Done()
 
 	sl.BaseAddrShortURL = strings.TrimSuffix(sl.BaseAddrShortURL, "/")
 	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
@@ -306,6 +335,9 @@ func (sl *ShortLong) ShortURLFromLongJSON(w http.ResponseWriter, r *http.Request
 
 // Обработчик проверки связи с БД (GET "/ping").
 func (sl *ShortLong) PingDB(w http.ResponseWriter, r *http.Request) {
+
+	sl.wg.Add(1)
+	defer sl.wg.Done()
 
 	// Пинг
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -329,6 +361,9 @@ func (sl *ShortLong) UserURLs(w http.ResponseWriter, r *http.Request) {
 	sl.DB.mu.RLock()
 	defer sl.DB.mu.RUnlock()
 
+	sl.wg.Add(1)
+	defer sl.wg.Done()
+
 	sl.BaseAddrShortURL = strings.TrimSuffix(sl.BaseAddrShortURL, "/")
 	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
 
@@ -342,6 +377,9 @@ func (sl *ShortLong) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 	sl.DB.mu.RLock()
 	defer sl.DB.mu.RUnlock()
 
+	sl.wg.Add(1)
+	defer sl.wg.Done()
+
 	internalDeleteUserURLs(sl.DB.Ptr, sl, w, r)
 }
 
@@ -350,6 +388,9 @@ func (sl *ShortLong) LoadFileURL() error {
 
 	sl.List.mu.RLock()
 	defer sl.List.mu.RUnlock()
+
+	sl.wg.Add(1)
+	defer sl.wg.Done()
 
 	// Проверка
 	if sl.FileStoragePath == "" {
@@ -400,6 +441,39 @@ func (sl *ShortLong) LoadFileURL() error {
 	}
 
 	return nil
+}
+
+// ---
+
+// Ожидание завершения работы активных обработчиков.
+func (sl *ShortLong) WaitFinActions() {
+
+	sl.wg.Wait()
+}
+
+// Установка признака, что активен процесс остановки.
+func (sl *ShortLong) SetFlagStopping() {
+
+	sl.Log.Info("Установлен признак запуска процесса остановки")
+	sl.stopping = true
+}
+
+// Проверка признака, что активен процесс остановки. Возвращается true - в процессе остановки.
+func (sl *ShortLong) IsFlagStopping() bool {
+
+	return sl.stopping
+}
+
+// Установка признака активности процесса асинхронного удаления.
+func (sl *ShortLong) AsyncDeleteWGAdd() {
+
+	sl.wg.Add(1)
+}
+
+// Сброс признака активности асинхронного удаления.
+func (sl *ShortLong) AsyncDeleteWGDone() {
+
+	sl.wg.Done()
 }
 
 // ---
@@ -470,6 +544,8 @@ func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os o
 			ServerAddr:       fl.Port,
 			FileStoragePath:  fl.FileStoragePath,
 			Log:              log,
+			wg:               sync.WaitGroup{},
+			stopping:         false,
 		}
 	})
 

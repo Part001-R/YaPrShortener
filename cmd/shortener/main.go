@@ -3,6 +3,7 @@ package main
 
 import (
 	"log"
+	"os"
 	"runtime/debug"
 
 	"github.com/Part001-R/YaPrShortener/internal/service"
@@ -36,4 +37,5 @@ func main() {
 	if err := service.Run(); err != nil {
 		log.Fatalf("Работа прервана по причине: {%v}", err)
 	}
+	os.Exit(0)
 }

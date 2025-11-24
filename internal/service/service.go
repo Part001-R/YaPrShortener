@@ -270,11 +270,16 @@ func signalsStopRun(data *checkReasonStop, log *zap.Logger) error {
 	// Логика.
 	select {
 	case <-data.sigSys:
-		log.Info("сервер остановлен штатно", zap.String("address", data.srvConf.Addr))
+		log.Info("Принят сигнал на штатную остановку")
+		data.params.storageLongShort.SetFlagStopping() // Установка признака, что запущен процесс остановки.
+		data.params.storageLongShort.WaitFinActions()  // Ожидание завершения активностей.
+		log.Info("Cервер остановлен штатно", zap.String("address", data.srvConf.Addr))
 		return nil
+
 	case err := <-data.chSrvErr:
 		log.Error("ошибка сервера", zap.String("address", data.srvConf.Addr), zap.String("ошибка", err.Error()))
 		return err
+
 	case err := <-data.chStorageErr:
 		log.Error("ошибка периодического сохранения метрик в файл", zap.String("address", data.srvConf.Addr), zap.String("ошибка", err.Error()))
 		return err
@@ -313,7 +318,7 @@ func actions(params *paramsURL, cr *chi.Mux) error {
 	chStorageErr := make(chan error)
 	sigSys := make(chan os.Signal, 1)
 
-	signal.Notify(sigSys, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigSys, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
 	data := &checkReasonStop{
 		chSrvErr:     chSrvErr,
@@ -331,7 +336,7 @@ func actions(params *paramsURL, cr *chi.Mux) error {
 	}
 
 	// Запуск обработчика асинхронной очистки таблицы shortener БД.
-	go asynClearShortenerTableDB(params.shortLongDB.Ptr, params.shortLongDB.ChForDelete, params.shortLongDB.ChDoDelete, params.log)
+	go asynClearShortenerTableDB(params)
 
 	// Приём сигналов остановки.
 	err := signalsStopRun(data, params.log)
@@ -385,24 +390,32 @@ func handlersShortener(cr *chi.Mux, params *paramsURL) error {
 //
 // Параметры:
 //
-//	db - указатель на БД.
-//	rxChForDelete - канал для приёма информации по удаляемой строке.
-//	rxChDoDelete - канал для приёма признака завершения накопления и запуска очистки таблицы.
-//	log - логгер.
-func asynClearShortenerTableDB(db *sql.DB, rxChForDelete chan handler.DeleteDB, rxChDoDelete chan struct{}, log *zap.Logger) {
+//	params - параметры.
+func asynClearShortenerTableDB(params *paramsURL) {
+
+	params.storageLongShort.AsyncDeleteWGAdd()
+	defer params.storageLongShort.AsyncDeleteWGDone()
 
 	rxMarkData := make([]handler.DeleteDB, 0)
 
 	for {
+
+		// Проверка, что запущен процесс остановки сервиса.
+		if params.storageLongShort.IsFlagStopping() {
+			params.log.Info("go рутина асинхронного удаления, приняла сигнал завершения работы")
+			return
+		}
+
+		// Логика.
 		select {
-		case deleteData, ok := <-rxChForDelete: // Накопление данных для удаления.
+		case deleteData, ok := <-params.shortLongDB.ChForDelete: // Накопление данных для удаления.
 			if !ok {
-				log.Error("Ошибка при получении данных из канала. Канал закрыт")
+				params.log.Error("Ошибка при получении данных из канала. Канал закрыт")
 				return
 			}
 			rxMarkData = append(rxMarkData, deleteData)
 
-		case <-rxChDoDelete: // Приём признака завершения накопления.
+		case <-params.shortLongDB.ChDoDelete: // Приём признака завершения накопления.
 
 			if len(rxMarkData) > 0 {
 
@@ -411,9 +424,9 @@ func asynClearShortenerTableDB(db *sql.DB, rxChForDelete chan handler.DeleteDB, 
 
 					query := `DELETE FROM shortener WHERE short = $1 AND uuid = $2 AND deleteflag = true`
 
-					result, err := db.Exec(query, data.Short, data.UUID)
+					result, err := params.shortLongDB.Ptr.Exec(query, data.Short, data.UUID)
 					if err != nil {
-						log.Error("Ошибка при удалении данных",
+						params.log.Error("Ошибка при удалении данных",
 							zap.Error(err),
 							zap.String("short", data.Short),
 						)
@@ -421,7 +434,7 @@ func asynClearShortenerTableDB(db *sql.DB, rxChForDelete chan handler.DeleteDB, 
 					}
 					numb, err := result.RowsAffected()
 					if err != nil {
-						log.Error("Ошибка при получении номера строки после удаления",
+						params.log.Error("Ошибка при получении номера строки после удаления",
 							zap.Error(err),
 							zap.String("short", data.Short),
 						)
@@ -434,10 +447,11 @@ func asynClearShortenerTableDB(db *sql.DB, rxChForDelete chan handler.DeleteDB, 
 				// Очистка накопления.
 				rxMarkData = make([]handler.DeleteDB, 0)
 
-				log.Info("Очистка таблицы shortener завершена",
+				params.log.Info("Очистка таблицы shortener завершена",
 					zap.String("удалено строк", fmt.Sprintf("%d", cnt)),
 				)
 			}
+		default:
 		}
 	}
 }
