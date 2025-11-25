@@ -64,7 +64,7 @@ type ShortLong struct {
 	Log              *zap.Logger
 	wg               sync.WaitGroup // учёт активности обработчиков запросов и асинхронного удаления.
 	stopping         bool           // true - признак, что сервис в процессе остановки.
-
+	mu               sync.RWMutex
 }
 
 // Для передачи содержимого файла в память.
@@ -454,12 +454,18 @@ func (sl *ShortLong) WaitFinActions() {
 // Установка признака, что активен процесс остановки.
 func (sl *ShortLong) SetFlagStopping() {
 
+	sl.mu.RLock()
+	defer sl.mu.RUnlock()
+
 	sl.Log.Info("Установлен признак запуска процесса остановки")
 	sl.stopping = true
 }
 
 // Проверка признака, что активен процесс остановки. Возвращается true - в процессе остановки.
 func (sl *ShortLong) IsFlagStopping() bool {
+
+	sl.mu.RLock()
+	defer sl.mu.RUnlock()
 
 	return sl.stopping
 }
@@ -546,6 +552,7 @@ func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os o
 			Log:              log,
 			wg:               sync.WaitGroup{},
 			stopping:         false,
+			mu:               sync.RWMutex{},
 		}
 	})
 
