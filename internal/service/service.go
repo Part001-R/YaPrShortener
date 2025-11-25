@@ -336,6 +336,7 @@ func actions(params *paramsURL, cr *chi.Mux) error {
 	}
 
 	// Запуск обработчика асинхронной очистки таблицы shortener БД.
+	params.storageLongShort.WGAdd() // wg.Add(1)
 	go asynClearShortenerTableDB(params)
 
 	// Приём сигналов остановки.
@@ -393,8 +394,7 @@ func handlersShortener(cr *chi.Mux, params *paramsURL) error {
 //	params - параметры.
 func asynClearShortenerTableDB(params *paramsURL) {
 
-	params.storageLongShort.AsyncDeleteWGAdd()
-	defer params.storageLongShort.AsyncDeleteWGDone()
+	defer params.storageLongShort.WGDone() // wg.Done()
 
 	rxMarkData := make([]handler.DeleteDB, 0)
 

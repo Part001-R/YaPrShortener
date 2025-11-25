@@ -3,16 +3,31 @@
 package logger
 
 import (
+	"fmt"
 	"sync"
 
 	"go.uber.org/zap"
 )
 
-// Экземпляр логгера.
-var log *zap.Logger = zap.NewNop()
+var (
+	// Экземпляр логгера.
+	log *zap.Logger = zap.NewNop()
 
-// Обеспечение единоразовой инициализации.
-var once sync.Once
+	// Обеспечение единоразовой инициализации.
+	once sync.Once
+
+	// Поддерживаемые уровни логирования
+	validLevels = map[string]struct{}{
+		"debug": {},
+		"info":  {},
+		"warn":  {},
+		"error": {},
+		"Debug": {},
+		"Info":  {},
+		"Warn":  {},
+		"Error": {},
+	}
+)
 
 // NewLogger инициализирует логгер. Возвращается логгер и ошибка.
 //
@@ -23,25 +38,29 @@ func NewLogger(level string) (*zap.Logger, error) {
 
 	var initErr error
 
+	// Проверка
+	if _, exists := validLevels[level]; !exists {
+		return nil, fmt.Errorf("неподдерживаемый уровень логирования: %s", level)
+	}
+
 	once.Do(func() {
 		// Преобразуем текстовый уровень логирования в zap.AtomicLevel.
-		lvl, err := zap.ParseAtomicLevel(level)
-		if err != nil {
-			initErr = err
-			return
-		}
+		lvl := zap.NewAtomicLevel()
+		lvl.UnmarshalText([]byte(level))
+
 		// Создаем новую конфигурацию логера.
 		cfg := zap.NewProductionConfig()
+
 		// Устанавливаем уровень.
 		cfg.Level = lvl
-		// Создаем логер на основе конфигурации.
-		zl, err := cfg.Build()
+
+		// Создаем логгер на основе конфигурации.
+		var err error
+		log, err = cfg.Build()
 		if err != nil {
 			initErr = err
 			return
 		}
-		// Устанавливаем синглтон.
-		log = zl
 	})
 
 	if initErr != nil {

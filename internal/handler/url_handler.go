@@ -115,8 +115,8 @@ type systemAct interface {
 	PingDB(w http.ResponseWriter, r *http.Request)
 	WaitFinActions()
 	SetFlagStopping()
-	AsyncDeleteWGAdd()
-	AsyncDeleteWGDone()
+	WGAdd()
+	WGDone()
 	IsFlagStopping() bool
 }
 
@@ -465,13 +465,13 @@ func (sl *ShortLong) IsFlagStopping() bool {
 }
 
 // Установка признака активности процесса асинхронного удаления.
-func (sl *ShortLong) AsyncDeleteWGAdd() {
+func (sl *ShortLong) WGAdd() {
 
 	sl.wg.Add(1)
 }
 
 // Сброс признака активности асинхронного удаления.
-func (sl *ShortLong) AsyncDeleteWGDone() {
+func (sl *ShortLong) WGDone() {
 
 	sl.wg.Done()
 }
