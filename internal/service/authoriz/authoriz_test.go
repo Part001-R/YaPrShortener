@@ -20,16 +20,21 @@ func Test_GenerateUniqueID_SUCCESS(t *testing.T) {
 
 // Проверка Cookie.
 func TestSetUserCookie(t *testing.T) {
-
 	// Регистратор
 	recorder := httptest.NewRecorder()
 	userID := "test_user"
 
-	// Вызов функции etUserCookie
+	// Вызов функции SetUserCookie
 	SetUserCookie(recorder, userID)
 
 	// Получение cookie из ответа
-	cookies := recorder.Result().Cookies()
+	response := recorder.Result()
+	defer func() {
+		err := response.Body.Close()
+		require.NoErrorf(t, err, "неожиданная ошибка при закрытии body:<%v>", err)
+	}()
+
+	cookies := response.Cookies()
 	lenC := len(cookies)
 	require.NotEqual(t, 0, lenC, "длинна куки = 0")
 
