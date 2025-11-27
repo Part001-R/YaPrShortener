@@ -62,7 +62,7 @@ type ShortLong struct {
 	ServerAddr       string
 	FileStoragePath  string
 	Log              *zap.Logger
-	wg               sync.WaitGroup // учёт активности обработчиков запросов и асинхронного удаления.
+	wg               sync.WaitGroup // механизм для безопасного выполнения кода.
 	stopping         bool           // true - признак, что сервис в процессе остановки.
 	mu               sync.RWMutex
 }
@@ -235,7 +235,6 @@ func (sl *ShortLong) MiddlewareAudit(h http.Handler) http.Handler {
 
 		// Проверка, что сервер в состоянии остановки.
 		if sl.stopping {
-			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte("Сервер временно недоступен"))
 			return
 		}

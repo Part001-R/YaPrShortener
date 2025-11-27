@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"sync"
 	"testing"
@@ -24,7 +25,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// internalShortURLFromLong.
+// ShortURLFromLong.
+func Test_ShortURLFromLong_SUCCESS(t *testing.T) {
+
+	// Создание интерфейса.
+	act, err := constructor()
+	require.NoErrorf(t, err, "неожиданная ошибка в функции constructor:<%v>", err)
+
+	// Подготовка.
+	longURL := "https://practicum.yandex.ru/"
+	bodyReq := bytes.NewBuffer([]byte(longURL))
+
+	req := httptest.NewRequest(http.MethodPost, `http://localhost:8080/`, bodyReq)
+	res := httptest.NewRecorder()
+
+	req.Header.Set("Content-Type", `text/plain`)
+
+	// Вызов метода.
+	act.ShortURLFromLong(res, req)
+
+	resp := res.Result()
+	defer func() {
+		err := resp.Body.Close()
+		assert.NoErrorf(t, err, "ошибка закрытия потока {%v}", err)
+	}()
+
+	// Проверка статуса.
+	require.Equalf(t, http.StatusCreated, resp.StatusCode, "ожидался код <%d>, а принят <%d>", http.StatusCreated, resp.StatusCode)
+}
+
 func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 
 	log, err := logger.NewLogger("Debug")
@@ -156,7 +185,6 @@ func Test_internalShortURLFromLong_SUCCESS(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func Test_internalShortURLFromLong_FAULT(t *testing.T) {
@@ -247,7 +275,39 @@ func Test_internalShortURLFromLong_FAULT(t *testing.T) {
 	}
 }
 
-// internalShortURLFromLongJSON.
+// ShortURLFromLongJSON.
+func Test_ShortURLFromLongJSON_SUCCESS(t *testing.T) {
+
+	// Создание интерфейса.
+	act, err := constructor()
+	require.NoErrorf(t, err, "неожиданная ошибка в функции constructor:<%v>", err)
+
+	// Подготовка.
+	testData := rxLongURL{URL: "https://practicum.yandex.ru"}
+
+	txData, err := json.Marshal(testData)
+	require.NoErrorf(t, err, "ожидалось отсутствие ошибка при маршалинге, а принято <%v>", err)
+
+	bodyReq := bytes.NewBuffer([]byte(txData))
+
+	req := httptest.NewRequest(http.MethodPost, `http://localhost:8080/api/shorten`, bodyReq)
+	res := httptest.NewRecorder()
+
+	req.Header.Set("Content-Type", `application/json`)
+
+	// Вызов метода.
+	act.ShortURLFromLongJSON(res, req)
+
+	resp := res.Result()
+	defer func() {
+		err := resp.Body.Close()
+		assert.NoErrorf(t, err, "ошибка закрытия потока {%v}", err)
+	}()
+
+	// Проверка статуса.
+	require.Equalf(t, http.StatusCreated, resp.StatusCode, "ожидался код <%d>, а принят <%d>", http.StatusCreated, resp.StatusCode)
+}
+
 func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 
 	log, err := logger.NewLogger("Debug")
@@ -586,7 +646,106 @@ func Test_ReadShortByLongDB(t *testing.T) {
 	}
 }
 
-// internalLongURLFromShort.
+// LongURLFromShort.
+func Test_LongURLFromShort_FAULT(t *testing.T) {
+
+	// Создание интерфейса.
+	act, err := constructor()
+	require.NoErrorf(t, err, "неожиданная ошибка в функции constructor:<%v>", err)
+
+	// Подготовка.
+	req := httptest.NewRequest(http.MethodGet, `http://localhost:8080/EwHXdJfB`, nil)
+	res := httptest.NewRecorder()
+
+	req.Header.Set("Content-Type", `text/plain`)
+
+	// Вызов метода.
+	act.LongURLFromShort(res, req)
+
+	resp := res.Result()
+	defer func() {
+		err := resp.Body.Close()
+		assert.NoErrorf(t, err, "ошибка закрытия потока {%v}", err)
+	}()
+
+	// Проверка статуса.
+	require.Equalf(t, http.StatusBadRequest, resp.StatusCode, "ожидался код <%d>, а принят <%d>", http.StatusBadRequest, resp.StatusCode)
+
+	/*
+		При выполнении теста, в лог заносится сообщение: "в мапе LongByShort, нет признака существования ключа:<EwHXdJfB>
+	*/
+}
+
+func Test_LongURLFromShort_SUCCESS(t *testing.T) {
+
+	// Создание интерфейса.
+	act, err := constructor()
+	require.NoErrorf(t, err, "неожиданная ошибка в функции constructor:<%v>", err)
+
+	// ----- Формирование короткого представления из длинного.
+	//
+	// Подготовка.
+	longURL := "https://practicum.yandex.ru/"
+	bodyReq := bytes.NewBuffer([]byte(longURL))
+
+	req := httptest.NewRequest(http.MethodPost, `http://localhost:8080/`, bodyReq)
+	res := httptest.NewRecorder()
+
+	req.Header.Set("Content-Type", `text/plain`)
+
+	// Вызов метода.
+	act.ShortURLFromLong(res, req)
+
+	resp1 := res.Result()
+	defer func() {
+		err := resp1.Body.Close()
+		assert.NoErrorf(t, err, "ошибка закрытия потока {%v}", err)
+	}()
+
+	// Проверка статуса.
+	require.Equalf(t, http.StatusCreated, resp1.StatusCode, "ожидался код <%d>, а принят <%d>", http.StatusCreated, resp1.StatusCode)
+
+	// Обработка тела ответа.
+	rxData, err := io.ReadAll(resp1.Body)
+	rxStr := string(rxData)
+	require.NoErrorf(t, err, "ошибка при чтении тела ответа, при формировании короткой ссылки:<%v>", err)
+
+	// ----- Прлучение длинного представления по короткому.
+	//
+	// Подготовка.
+	parsedURL, err := url.Parse(rxStr)
+	if err != nil {
+		fmt.Println("Ошибка парсинга URL:", err)
+		return
+	}
+
+	// Формирование пути.
+	path := parsedURL.Path
+	path = `http://localhost:8080` + path
+
+	req = httptest.NewRequest(http.MethodGet, path, nil)
+	res = httptest.NewRecorder()
+
+	req.Header.Set("Content-Type", `text/plain`)
+
+	// Вызов метода.
+	act.LongURLFromShort(res, req)
+
+	resp2 := res.Result()
+	defer func() {
+		err := resp2.Body.Close()
+		assert.NoErrorf(t, err, "ошибка закрытия потока {%v}", err)
+	}()
+
+	// Проверка статуса.
+	require.Equalf(t, http.StatusTemporaryRedirect, resp2.StatusCode, "ожидался код <%d>, а принят <%d>", http.StatusTemporaryRedirect, resp2.StatusCode)
+
+	// Проверка заголовка.
+	location := resp2.Header.Get("Location")
+
+	assert.Equalf(t, longURL, location, "ожидалось содержимое заголовка:<%s>, а принято:<%s>", longURL, location)
+}
+
 func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 
 	log, err := logger.NewLogger("Debug")
@@ -703,7 +862,6 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func Test_internalLongURLFromShort_FAULT(t *testing.T) {
@@ -1196,139 +1354,6 @@ func Test_storageDBURL_FAULT(t *testing.T) {
 	}
 }
 
-// ShortURLFromLongBatch.
-func Test_ShortURLFromLongBatch_SUCCESS(t *testing.T) {
-
-	// Подготовка данных для тестов
-	testsData := []struct {
-		nameTest  string
-		batchT    []rxLongURLBatch
-		initMockT func(mock sqlmock.Sqlmock)
-	}{
-		{
-			nameTest: "сохранение в БД",
-			batchT: []rxLongURLBatch{
-				{
-					CorrelationID: "AAA",
-					OriginalURL:   "https://practicum.yandex.ru/",
-				},
-			},
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectBegin()
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), "AAA").
-					WillReturnResult(sqlmock.NewResult(1, 1))
-				mock.ExpectCommit()
-			},
-		},
-	}
-
-	// тесты
-	for _, tt := range testsData {
-		t.Run(tt.nameTest, func(t *testing.T) {
-			db, mock, err := sqlmock.New()
-			require.NoError(t, err)
-			defer db.Close()
-
-			tt.initMockT(mock)
-
-			shortData, err := allActionsStorageBatchDBURL(db, tt.batchT, "http://localhost:8080/", "AAA")
-			require.NoErrorf(t, err, "ошибка при работе с БД <%v>", err)
-
-			assert.Equalf(t, len(tt.batchT), len(shortData), "ожидаемая длинна слайса <%d> не соответствует полученному <%d>", len(tt.batchT), len(shortData))
-
-			// Проверка всех ожиданий
-			err = mock.ExpectationsWereMet()
-			require.NoError(t, err, "не все ожидания были выполнены")
-		})
-	}
-}
-
-func Test_ShortURLFromLongBatch_FAULT(t *testing.T) {
-
-	// Подготовка данных для тестов
-	testsData := []struct {
-		nameTest   string
-		batchT     []rxLongURLBatch
-		initMockT  func(mock sqlmock.Sqlmock)
-		useDBT     bool
-		useBatchT  bool
-		wantErrorT string
-	}{
-		{
-			nameTest: "нет указателя на БД",
-			batchT: []rxLongURLBatch{
-				{
-					CorrelationID: "AAA",
-					OriginalURL:   "https://practicum.yandex.ru/",
-				},
-			},
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectBegin()
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-				mock.ExpectCommit()
-			},
-			useDBT:     false,
-			useBatchT:  true,
-			wantErrorT: "нет указателя на БД",
-		},
-		{
-			nameTest: "пустой batch",
-			batchT:   []rxLongURLBatch{},
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectBegin()
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
-					WillReturnResult(sqlmock.NewResult(1, 1))
-				mock.ExpectCommit()
-			},
-			useDBT:     true,
-			useBatchT:  true,
-			wantErrorT: "в принятом массиве длинных ссылок нет данных",
-		},
-		{
-			nameTest: "нет указателя на batch",
-			batchT:   []rxLongURLBatch{},
-			initMockT: func(mock sqlmock.Sqlmock) {
-				mock.ExpectBegin()
-				mock.ExpectExec("INSERT INTO").
-					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), "AAA").
-					WillReturnResult(sqlmock.NewResult(1, 1))
-				mock.ExpectCommit()
-			},
-			useDBT:     true,
-			useBatchT:  false,
-			wantErrorT: "нет указателя на batch",
-		},
-	}
-
-	// тесты
-	for _, tt := range testsData {
-		t.Run(tt.nameTest, func(t *testing.T) {
-			db, mock, err := sqlmock.New()
-			require.NoError(t, err)
-			defer db.Close()
-
-			tt.initMockT(mock)
-
-			if !tt.useDBT {
-				db = nil
-			}
-			if !tt.useBatchT {
-				tt.batchT = nil
-			}
-
-			rx, err := allActionsStorageBatchDBURL(db, tt.batchT, "http://localhost:8080/", "AAA")
-			_ = rx
-
-			assert.Equalf(t, tt.wantErrorT, err.Error(), "ожидалась ошибка <%s> а принято <%s>", tt.wantErrorT, err.Error())
-
-		})
-	}
-}
-
 // storageBatchMap.
 func Test_storageBatchMap_SUCCESS(t *testing.T) {
 
@@ -1469,6 +1494,40 @@ func Test_storageBatchMap_FAULT(t *testing.T) {
 
 		})
 	}
+}
+
+// PingDB.
+func Test_PingDB_SUCCESS(t *testing.T) {
+
+	ptrDB, _, err := sqlmock.New()
+	require.NoErrorf(t, err, "неожиданная ошибка: <%v>", err)
+
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожиданная ошибка при создании логгера: <%v>", err)
+
+	sl := &ShortLong{
+		List: &ShortLongURL{},
+		DB: &ShortLongDB{
+			Ptr:         ptrDB,
+			mu:          sync.RWMutex{},
+			ChForDelete: make(chan DeleteDB),
+			ChDoDelete:  make(chan struct{}),
+		},
+		Observer:         nil,
+		BaseAddrShortURL: "",
+		ServerAddr:       "",
+		FileStoragePath:  "",
+		Log:              log,
+		wg:               sync.WaitGroup{},
+		stopping:         false,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	rr := httptest.NewRecorder()
+
+	sl.PingDB(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
 }
 
 // workWithRxData.
@@ -1787,7 +1846,162 @@ func Test_Middleware_FAULT(t *testing.T) {
 	}
 }
 
-// internalShortURLFromLongBatch.
+// ShortURLFromLongBatch.
+func Test_ShortURLFromLongBatch_SUCCESS(t *testing.T) {
+
+	// Подготовка.
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	slDB := NewShortenerDB(db)
+
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
+	conf := &ShortLong{
+		List: &ShortLongURL{
+			ShorByLong:  make(map[string]string),
+			LongByShort: make(map[string]string),
+			mu:          sync.RWMutex{},
+		},
+		DB:               slDB,
+		Observer:         nil,
+		BaseAddrShortURL: ":8080/",
+		ServerAddr:       ":8080",
+		FileStoragePath:  "storage.json",
+		Log:              log,
+		wg:               sync.WaitGroup{},
+		stopping:         false,
+		mu:               sync.RWMutex{},
+	}
+
+	// Данные для тестов.
+	testData := []struct {
+		nameT          string
+		urlT           string
+		methodReqT     string
+		batchLongURLT  []rxLongURLBatch
+		initMockT      func(mock sqlmock.Sqlmock)
+		useDB          bool
+		wantStatusCode int
+	}{
+		{
+			nameT:      "БД",
+			urlT:       "http://localhost:8080/api/shorten/batch",
+			methodReqT: http.MethodPost,
+			batchLongURLT: []rxLongURLBatch{
+				{
+					CorrelationID: "12345",
+					OriginalURL:   "https://practicum.yandex.ru/",
+				},
+				{
+					CorrelationID: "67890",
+					OriginalURL:   "https://example.com/",
+				},
+			},
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://example.com/", sqlmock.AnyArg(), sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(2, 1))
+
+				mock.ExpectCommit()
+			},
+			useDB:          true,
+			wantStatusCode: http.StatusCreated,
+		},
+		{
+			nameT:      "Мапы",
+			urlT:       "http://localhost:8080/api/shorten/batch",
+			methodReqT: http.MethodPost,
+			batchLongURLT: []rxLongURLBatch{
+				{
+					CorrelationID: "11111",
+					OriginalURL:   "https://practicum.yandex.ru/",
+				},
+				{
+					CorrelationID: "22222",
+					OriginalURL:   "https://example.com/",
+				},
+			},
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://example.com/", sqlmock.AnyArg(), sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(2, 1))
+
+				mock.ExpectCommit()
+			},
+			useDB:          false,
+			wantStatusCode: http.StatusCreated,
+		},
+	}
+
+	// Тесты
+	for _, tt := range testData {
+		t.Run(tt.nameT, func(t *testing.T) {
+
+			tt.initMockT(mock)
+
+			dataByte, err := json.Marshal(tt.batchLongURLT)
+			require.NoErrorf(t, err, "ошибка при сериализации данных")
+
+			body := bytes.NewBuffer(dataByte)
+
+			req := httptest.NewRequest(tt.methodReqT, tt.urlT, body)
+			res := httptest.NewRecorder()
+
+			req.Header.Set("Content-Type", "application/json")
+
+			if !tt.useDB {
+				conf.DB.Ptr = nil
+			}
+
+			internalShortURLFromLongBatch(db, conf, res, req)
+
+			resp := res.Result()
+			defer func() {
+				err := resp.Body.Close()
+				assert.NoErrorf(t, err, "ошибка закрытия потока {%v}", err)
+			}()
+
+			require.Equalf(t, tt.wantStatusCode, resp.StatusCode, "ожидался код <%d>, а принят <%d>", tt.wantStatusCode, resp.StatusCode)
+
+			// Результат
+			rxByte, err := io.ReadAll(resp.Body)
+			require.NoErrorf(t, err, "ошибка при чтении тела ответа")
+
+			batchShortURL := make([]txShortURLBatch, 0)
+
+			err = json.Unmarshal(rxByte, &batchShortURL)
+			require.NoErrorf(t, err, "ошибка десериализации")
+
+			require.Equalf(t, tt.batchLongURLT[0].CorrelationID, batchShortURL[0].CorrelationID, "ожидалось <%s>, а принято <%s>", tt.batchLongURLT[0].CorrelationID, batchShortURL[0].CorrelationID)
+			require.Equalf(t, tt.batchLongURLT[1].CorrelationID, batchShortURL[1].CorrelationID, "ожидалось <%s>, а принято <%s>", tt.batchLongURLT[1].CorrelationID, batchShortURL[1].CorrelationID)
+
+			assert.NotEqualf(t, 0, len(batchShortURL[0].ShortURL), "нет содержимого сокращения в ответе у id <%d>", 0)
+			assert.NotEqualf(t, 0, len(batchShortURL[1].ShortURL), "нет содержимого сокращения в ответе у id <%d>", 1)
+
+			// Проверка, что все mock выполнены
+			if tt.useDB {
+				err = mock.ExpectationsWereMet()
+				require.NoError(t, err, "не все ожидания были выполнены")
+			}
+		})
+	}
+}
+
 func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 
 	log, err := logger.NewLogger("Debug")
@@ -1933,6 +2147,9 @@ func Test_internalShortURLFromLongBatch_SUCCESS(t *testing.T) {
 				err = mock.ExpectationsWereMet()
 				require.NoError(t, err, "не все ожидания были выполнены")
 			}
+
+			// Удаление созданного файла.
+			os.Remove("storage.json")
 		})
 	}
 }
@@ -2039,7 +2256,7 @@ func Test_internalShortURLFromLongBatch_FAULT(t *testing.T) {
 	}
 }
 
-// InternalDeleteUserURLs.
+// DeleteUserURLs.
 func Test_InternalDeleteUserURLs_SUCCESS(t *testing.T) {
 
 	log, err := logger.NewLogger("Debug")
@@ -2226,7 +2443,142 @@ func Benchmark_InternalDeleteUserURLs_SUCCESS(b *testing.B) {
 	require.NoErrorf(b, err, "неожиданная ошибка при закрытии файла профилирования памяти: <%v>", err)
 }
 
-// Конструкторы
+// allActionsStorageBatchDBURL.
+func Test_allActionsStorageBatchDBURL_SUCCESS(t *testing.T) {
+
+	// Подготовка данных для тестов
+	testsData := []struct {
+		nameTest  string
+		batchT    []rxLongURLBatch
+		initMockT func(mock sqlmock.Sqlmock)
+	}{
+		{
+			nameTest: "сохранение в БД",
+			batchT: []rxLongURLBatch{
+				{
+					CorrelationID: "AAA",
+					OriginalURL:   "https://practicum.yandex.ru/",
+				},
+			},
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), "AAA").
+					WillReturnResult(sqlmock.NewResult(1, 1))
+				mock.ExpectCommit()
+			},
+		},
+	}
+
+	// тесты
+	for _, tt := range testsData {
+		t.Run(tt.nameTest, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			tt.initMockT(mock)
+
+			shortData, err := allActionsStorageBatchDBURL(db, tt.batchT, "http://localhost:8080/", "AAA")
+			require.NoErrorf(t, err, "ошибка при работе с БД <%v>", err)
+
+			assert.Equalf(t, len(tt.batchT), len(shortData), "ожидаемая длинна слайса <%d> не соответствует полученному <%d>", len(tt.batchT), len(shortData))
+
+			// Проверка всех ожиданий
+			err = mock.ExpectationsWereMet()
+			require.NoError(t, err, "не все ожидания были выполнены")
+		})
+	}
+}
+
+func Test_allActionsStorageBatchDBURL_FAULT(t *testing.T) {
+
+	// Подготовка данных для тестов
+	testsData := []struct {
+		nameTest   string
+		batchT     []rxLongURLBatch
+		initMockT  func(mock sqlmock.Sqlmock)
+		useDBT     bool
+		useBatchT  bool
+		wantErrorT string
+	}{
+		{
+			nameTest: "нет указателя на БД",
+			batchT: []rxLongURLBatch{
+				{
+					CorrelationID: "AAA",
+					OriginalURL:   "https://practicum.yandex.ru/",
+				},
+			},
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+				mock.ExpectCommit()
+			},
+			useDBT:     false,
+			useBatchT:  true,
+			wantErrorT: "нет указателя на БД",
+		},
+		{
+			nameTest: "пустой batch",
+			batchT:   []rxLongURLBatch{},
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg()).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+				mock.ExpectCommit()
+			},
+			useDBT:     true,
+			useBatchT:  true,
+			wantErrorT: "в принятом массиве длинных ссылок нет данных",
+		},
+		{
+			nameTest: "нет указателя на batch",
+			batchT:   []rxLongURLBatch{},
+			initMockT: func(mock sqlmock.Sqlmock) {
+				mock.ExpectBegin()
+				mock.ExpectExec("INSERT INTO").
+					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), "AAA").
+					WillReturnResult(sqlmock.NewResult(1, 1))
+				mock.ExpectCommit()
+			},
+			useDBT:     true,
+			useBatchT:  false,
+			wantErrorT: "нет указателя на batch",
+		},
+	}
+
+	// тесты
+	for _, tt := range testsData {
+		t.Run(tt.nameTest, func(t *testing.T) {
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			tt.initMockT(mock)
+
+			if !tt.useDBT {
+				db = nil
+			}
+			if !tt.useBatchT {
+				tt.batchT = nil
+			}
+
+			rx, err := allActionsStorageBatchDBURL(db, tt.batchT, "http://localhost:8080/", "AAA")
+			_ = rx
+
+			assert.Equalf(t, tt.wantErrorT, err.Error(), "ожидалась ошибка <%s> а принято <%s>", tt.wantErrorT, err.Error())
+
+		})
+	}
+}
+
+// ---
+
+// Конструкторы.
 func Test_NewShortenerMemory_SUCCESS(t *testing.T) {
 
 	inst := NewShortenerMemory()
@@ -2237,14 +2589,12 @@ func Test_NewShortenerMemory_SUCCESS(t *testing.T) {
 
 func Test_NewShortenerDB_SUCCESS(t *testing.T) {
 
-	db, _, err := sqlmock.New()
-	require.NoError(t, err)
-	defer db.Close()
+	var db *sql.DB
 
 	inst := NewShortenerDB(db)
 	assert.NotNil(t, inst.ChDoDelete, "отсутствует указатель на ChDoDelete")
 	assert.NotNil(t, inst.ChForDelete, "отсутствует указатель на ChForDelete")
-	assert.NotNil(t, inst.Ptr, "отсутствует указатель на Ptr")
+	assert.Nil(t, inst.Ptr, "должен отсутствовать указатель")
 }
 
 func Test_NewShortener_SUCCESS(t *testing.T) {
@@ -2288,6 +2638,8 @@ func Test_NewShortener_SUCCESS(t *testing.T) {
 	assert.NotNil(t, inst, "отсутствует указатель")
 }
 
+// ---
+
 // ClearShortenerTable.
 func Test_ClearShortenerTable(t *testing.T) {
 
@@ -2325,7 +2677,7 @@ func Test_ClearShortenerTable(t *testing.T) {
 	})
 }
 
-// WaitFinActions
+// WaitFinActions.
 func Test_WaitFinActions_SUCCESS(t *testing.T) {
 	sl := &ShortLong{}
 
@@ -2346,7 +2698,7 @@ func Test_WaitFinActions_SUCCESS(t *testing.T) {
 	assert.GreaterOrEqual(t, duration, 100*time.Millisecond, "WaitFinActions завершилась слишком быстро")
 }
 
-// SetFlagStopping
+// SetFlagStopping.
 func Test_SetFlagStopping_SUCCESS(t *testing.T) {
 
 	log, err := logger.NewLogger("Debug")
@@ -2371,7 +2723,7 @@ func Test_SetFlagStopping_SUCCESS(t *testing.T) {
 	assert.NotEqualf(t, before, after, "значения должны отличаться. до запуска:<%t> и после:<%t>", before, after)
 }
 
-// IsFlagStopping
+// IsFlagStopping.
 func Test_IsFlagStopping_SUCCESS(t *testing.T) {
 
 	log, err := logger.NewLogger("Debug")
@@ -2468,36 +2820,44 @@ func Test_AsyncDeleteWGDone_SUCCESS(t *testing.T) {
 	assert.GreaterOrEqual(t, duration, 1000*time.Millisecond, "WaitFinActions завершилась слишком быстро")
 }
 
-// PingDB.
-func Test_PingDB_SUCCESS(t *testing.T) {
+// ---
 
-	ptrDB, _, err := sqlmock.New()
-	require.NoErrorf(t, err, "неожиданная ошибка: <%v>", err)
+// constructor, конструктор сервиса, для тестов. Возвращает интерфейс и ошибка.
+func constructor() (Actions, error) {
 
-	log, err := logger.NewLogger("Debug")
-	require.NoErrorf(t, err, "неожиданная ошибка при создании логгера: <%v>", err)
-
-	sl := &ShortLong{
-		List: &ShortLongURL{},
-		DB: &ShortLongDB{
-			Ptr:         ptrDB,
-			mu:          sync.RWMutex{},
-			ChForDelete: make(chan DeleteDB),
-			ChDoDelete:  make(chan struct{}),
-		},
-		Observer:         nil,
-		BaseAddrShortURL: "",
-		ServerAddr:       "",
-		FileStoragePath:  "",
-		Log:              log,
-		wg:               sync.WaitGroup{},
-		stopping:         false,
+	// Флаги
+	fl := &flags.Config{
+		Port:             "localhost:8080",
+		BaseAddrShortURL: "http://localhost",
+		LogLevel:         "debug",
+		FileStoragePath:  "storage.json",
+		AuditFile:        "",
+		AuditURL:         "",
+		DSNDB:            "",
+		EnableHTTPS:      "false",
+		ConfigFile:       "",
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
-	rr := httptest.NewRecorder()
+	// in memory
+	storage := &ShortLongURL{
+		ShorByLong:  map[string]string{},
+		LongByShort: map[string]string{},
+		mu:          sync.RWMutex{},
+	}
 
-	sl.PingDB(rr, req)
+	// БД
+	var dbPtr *sql.DB
+	instDB := NewShortenerDB(dbPtr)
 
-	assert.Equal(t, http.StatusOK, rr.Code)
+	// Конструктор логгера.
+	log, err := logger.NewLogger("debug")
+	if err != nil {
+		return nil, fmt.Errorf("Ошибка при создании логгера:<%v>", err)
+	}
+
+	// Конструктор наблюдателя.
+	obsSrc := observer.NewObserver(log)
+
+	// Конструктор сервиса.
+	return NewShortener(storage, instDB, fl, obsSrc, log), nil
 }

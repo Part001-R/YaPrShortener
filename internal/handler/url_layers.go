@@ -789,7 +789,7 @@ func internalLongURLFromShortLayerWork(db *sql.DB, sl *ShortLong, short string) 
 
 		long, ok = sl.List.LongByShort[short]
 		if !ok {
-			sl.Log.Error("в аргументе rxData нет данных")
+			sl.Log.Error(fmt.Sprintf("в мапе LongByShort, нет признака существования ключа:<%s>", short))
 			return "", ErrStatusBadRequest
 		}
 		long = strings.Trim(long, "\"")
