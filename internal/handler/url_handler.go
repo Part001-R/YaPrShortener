@@ -367,7 +367,6 @@ func (sl *ShortLong) UserURLs(w http.ResponseWriter, r *http.Request) {
 	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
 
 	internalUserURLs(sl.DB.Ptr, sl, w, r)
-
 }
 
 // Обработчик указания пар для асинхронного удаления (DELETE "/api/user/urls").
