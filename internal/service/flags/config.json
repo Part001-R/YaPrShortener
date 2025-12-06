@@ -1,7 +1,8 @@
 {
     "server_address": "localhost:8080", 
-    "base_url": "http://localhost", 
+    "base_url": "http://localhost:8080/", 
     "file_storage_path": "storage.json",
     "database_dsn": "TestDSN",
-    "enable_https": true
+    "enable_https": true,
+    "trusted_subnet": "127.0.0.0/8"
 }

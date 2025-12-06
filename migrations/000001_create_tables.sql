@@ -36,6 +36,12 @@ CREATE TABLE counters (
 CREATE INDEX idx_counters_name_m ON counters(name_m);
 
 -- +goose Down
+-- Удаление индексов
+DROP INDEX IF EXISTS idx_shortener_long;
+DROP INDEX IF EXISTS idx_shortener_short;
+DROP INDEX IF EXISTS idx_gauges_name_m;
+DROP INDEX IF EXISTS idx_counters_name_m;
+
 -- Удаление таблицы shortener
 DROP TABLE IF EXISTS shortener;
 

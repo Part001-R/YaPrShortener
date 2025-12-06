@@ -102,7 +102,7 @@ func prepare() (*paramsURL, error) {
 	shortLong := handler.NewShortenerMemory()
 	shortLongDB := handler.NewShortenerDB(dbPtr)
 
-	storageLongShort := handler.NewShortener(shortLong, shortLongDB, flags, observer, log)
+	storageLongShort := handler.NewShortener(shortLong, shortLongDB, flags, observer, log, flags.TrustedSubnet)
 	err = storageLongShort.LoadFileURL()
 	if err != nil {
 		return &paramsURL{}, fmt.Errorf("ошибка в prepare: функция storageLongShort.LoadFileURL вернула ошибку -> <%w>", err)
@@ -366,16 +366,20 @@ func handlersShortener(cr *chi.Mux, params *paramsURL) error {
 
 	// Без аудита.
 	cr.Group(func(r chi.Router) {
+		r.Use(params.storageLongShort.MiddlewareCountConnect)
+		r.Use(params.storageLongShort.MiddlewareTrustSubnet)
 		r.Use(params.storageLongShort.Middleware)
 
 		r.Get("/ping", http.HandlerFunc(params.storageLongShort.PingDB))
 		r.Post("/api/shorten/batch", http.HandlerFunc(params.storageLongShort.ShortURLFromLongBatch))
 		r.Get("/api/user/urls", http.HandlerFunc(params.storageLongShort.UserURLs))
 		r.Delete("/api/user/urls", http.HandlerFunc(params.storageLongShort.DeleteUserURLs))
+		r.Get("/api/internal/stats", http.HandlerFunc(params.storageLongShort.Stats))
 	})
 
 	// Аудит.
 	cr.Group(func(r chi.Router) {
+		r.Use(params.storageLongShort.MiddlewareCountConnect)
 		r.Use(params.storageLongShort.MiddlewareAudit)
 		r.Use(params.storageLongShort.Middleware)
 

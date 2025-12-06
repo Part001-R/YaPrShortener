@@ -22,6 +22,7 @@ import (
 	"github.com/Part001-R/YaPrShortener/internal/service/flags"
 	"github.com/Part001-R/YaPrShortener/internal/service/logger"
 	"github.com/Part001-R/YaPrShortener/internal/service/observer"
+	"github.com/go-chi/chi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -2605,6 +2606,196 @@ func Test_allActionsStorageBatchDBURL_FAULT(t *testing.T) {
 	}
 }
 
+// Stats.
+//
+// Проверка статусов ответа.
+func Test_Stats_Status(t *testing.T) {
+
+	// Подготовка.
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
+	conf := &ShortLong{
+		List: &ShortLongURL{
+			ShorByLong:  make(map[string]string),
+			LongByShort: make(map[string]string),
+			mu:          sync.RWMutex{},
+		},
+		DB:               &ShortLongDB{},
+		BaseAddrShortURL: ":8080/",
+		ServerAddr:       ":8080",
+		FileStoragePath:  "storage.json",
+		Log:              log,
+		TrustedSubnet:    "127.0.0.0/8",
+	}
+
+	// Данные для теста.
+	dataTest := []struct {
+		nameTest           string
+		IPTest             string
+		wantStatusCode     int
+		clearTrustedSubnet bool
+	}{
+		{
+			nameTest:           "Есть вхождение",
+			IPTest:             "127.0.0.10",
+			wantStatusCode:     http.StatusOK,
+			clearTrustedSubnet: false,
+		},
+		{
+			nameTest:           "Нет вхождения",
+			IPTest:             "192.0.0.10",
+			wantStatusCode:     http.StatusForbidden,
+			clearTrustedSubnet: false,
+		},
+		{
+			nameTest:           "Нет значения в заголовке",
+			IPTest:             "",
+			wantStatusCode:     http.StatusForbidden,
+			clearTrustedSubnet: false,
+		},
+		{
+			nameTest:           "Нет инициализации подсети",
+			IPTest:             "192.0.0.10",
+			wantStatusCode:     http.StatusForbidden,
+			clearTrustedSubnet: true,
+		},
+	}
+
+	// Тесты.
+	for _, tt := range dataTest {
+		t.Run(tt.nameTest, func(t *testing.T) {
+
+			// Проверка на сброс содержимого.
+			if tt.clearTrustedSubnet {
+				conf.TrustedSubnet = ""
+			}
+
+			// Подготовка обработчиков.
+			r := chi.NewRouter()
+			r.Use(conf.MiddlewareCountConnect)
+			r.Use(conf.MiddlewareTrustSubnet)
+			r.Use(conf.Middleware)
+			r.Get("/api/internal/stats", http.HandlerFunc(conf.Stats))
+
+			// Запрос.
+			req, err := http.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+			if err != nil {
+				require.NoErrorf(t, err, "ошибка при создании запроса: <%v>", err)
+			}
+			req.Header.Set("X-Real-IP", tt.IPTest)
+
+			// Рекордер.
+			res := httptest.NewRecorder()
+
+			// Вызов обработчика.
+			r.ServeHTTP(res, req)
+
+			resp := res.Result()
+			defer func() {
+				err := resp.Body.Close()
+				assert.NoErrorf(t, err, "ошибка закрытия потока {%v}", err)
+			}()
+
+			// Проверка.
+			assert.Equalf(t, tt.wantStatusCode, res.Code, "ожидался код ответа:<%d>, а принят:<%d>", tt.wantStatusCode, res.Code)
+		})
+	}
+}
+
+// Проверка получения статистики.
+func Test_Stats_Request(t *testing.T) {
+
+	// Подготовка.
+	//
+	// Логгер
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+
+	// Конфигурация сервиса.
+	conf := &ShortLong{
+		List: &ShortLongURL{
+			ShorByLong:  make(map[string]string),
+			LongByShort: make(map[string]string),
+			mu:          sync.RWMutex{},
+		},
+		DB:               &ShortLongDB{},
+		BaseAddrShortURL: ":8080/",
+		ServerAddr:       ":8080",
+		FileStoragePath:  "storage.json",
+		Log:              log,
+		TrustedSubnet:    "127.0.0.0/8",
+	}
+
+	// Наполнение in-memory парами соответствия.
+	conf.List.LongByShort["long-1"] = "short-1"
+	conf.List.LongByShort["long-2"] = "short-2"
+	conf.List.LongByShort["long-3"] = "short-3"
+
+	// Данные для теста.
+	dataTest := []struct {
+		nameTest       string
+		IPTest         string
+		wantStatusCode int
+		wantData       txStats
+	}{
+		{
+			nameTest:       "Взаимодействие с in-memory.",
+			IPTest:         "127.0.0.10",
+			wantStatusCode: http.StatusOK,
+			wantData: txStats{
+				URLs:  3,
+				Users: 1,
+			},
+		},
+	}
+
+	// Тесты.
+	for _, tt := range dataTest {
+		t.Run(tt.nameTest, func(t *testing.T) {
+
+			// Подготовка обработчиков.
+			r := chi.NewRouter()
+			r.Use(conf.MiddlewareCountConnect)
+			r.Use(conf.MiddlewareTrustSubnet)
+			r.Use(conf.Middleware)
+			r.Get("/api/internal/stats", http.HandlerFunc(conf.Stats))
+
+			// Запрос.
+			req, err := http.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+			if err != nil {
+				require.NoErrorf(t, err, "ошибка при создании запроса: <%v>", err)
+			}
+			req.Header.Set("X-Real-IP", tt.IPTest)
+
+			// Рекордер.
+			res := httptest.NewRecorder()
+
+			// Вызов обработчика.
+			r.ServeHTTP(res, req)
+
+			resp := res.Result()
+			defer func() {
+				err := resp.Body.Close()
+				assert.NoErrorf(t, err, "ошибка закрытия потока {%v}", err)
+			}()
+
+			// Тело ответа.
+			rxByte, err := io.ReadAll(resp.Body)
+			require.NoErrorf(t, err, "ошибка при чтении тела запроса:<%v>", err)
+
+			var rxData txStats
+			err = json.Unmarshal(rxByte, &rxData)
+			require.NoErrorf(t, err, "ошибка десериализации:<%v>", err)
+
+			// Проверка.
+			require.Equalf(t, tt.wantStatusCode, res.Code, "ожидался код ответа:<%d>, а принят:<%d>", tt.wantStatusCode, res.Code)
+			assert.Equalf(t, tt.wantData.URLs, rxData.URLs, "для URLs ожидалось:<%d>, а принято:<%d>", tt.wantData.URLs, rxData.URLs)
+			assert.Equalf(t, tt.wantData.Users, rxData.Users, "для Users ожидалось:<%d>, а принято:<%d>", tt.wantData.Users, rxData.Users)
+		})
+	}
+}
+
 // ---
 
 // Конструкторы.
@@ -2663,7 +2854,7 @@ func Test_NewShortener_SUCCESS(t *testing.T) {
 	obsSrc := observer.NewObserver(log)
 
 	// Тест.
-	inst := NewShortener(storage, instDB, fl, obsSrc, log)
+	inst := NewShortener(storage, instDB, fl, obsSrc, log, "")
 	assert.NotNil(t, inst, "отсутствует указатель")
 }
 
@@ -2888,7 +3079,7 @@ func constructor() (Actions, error) {
 	obsSrc := observer.NewObserver(log)
 
 	// Конструктор сервиса.
-	return NewShortener(storage, instDB, fl, obsSrc, log), nil
+	return NewShortener(storage, instDB, fl, obsSrc, log, ""), nil
 }
 
 // constructorDB, конструктор сервиса, для тестов. Возвращает интерфейс, mock БД и ошибку.
@@ -2931,5 +3122,5 @@ func constructorDB() (Actions, sqlmock.Sqlmock, error) {
 	obsSrc := observer.NewObserver(log)
 
 	// Конструктор сервиса.
-	return NewShortener(storage, instDB, fl, obsSrc, log), mock, nil
+	return NewShortener(storage, instDB, fl, obsSrc, log, ""), mock, nil
 }

@@ -25,6 +25,7 @@ type Config struct {
 	DSNDB            string
 	EnableHTTPS      string
 	ConfigFile       string
+	TrustedSubnet    string
 }
 
 // Для чтения конфигурационного файла.
@@ -34,6 +35,7 @@ type readData struct {
 	FileStoragePath  string `json:"file_storage_path"`
 	DSNDB            string `json:"database_dsn"`
 	EnableHTTPS      bool   `json:"enable_https"`
+	TrustedSubnet    string `json:"trusted_subnet"`
 }
 
 // Обеспечение однократного выполнения.
@@ -56,6 +58,7 @@ func ParseFlags() *Config {
 		flag.StringVar(&flags.AuditURL, "audit-url", "", "URL удаленного сервера-приёмника")
 		flag.StringVar(&flags.EnableHTTPS, "s", "false", "разрешение на запуск HTTPS")
 		flag.StringVar(&flags.ConfigFile, "c", "", "путь к файлу конфигурации в формате JSON")
+		flag.StringVar(&flags.TrustedSubnet, "t", "", "доверенная подсеть CIDR")
 
 		flag.Parse()
 
@@ -134,6 +137,7 @@ func setFromFile(f *Config) error {
 	// Чтение конфигурационного файла.
 	var dataFromFile readData // Данные из конфигурационного файла.
 	var err error
+
 	if f.ConfigFile != "" {
 		dataFromFile, err = readConfigFile(f.ConfigFile)
 		if err != nil {
@@ -159,6 +163,9 @@ func setFromFile(f *Config) error {
 			} else {
 				f.EnableHTTPS = "false"
 			}
+		}
+		if f.TrustedSubnet == "" {
+			f.TrustedSubnet = dataFromFile.TrustedSubnet
 		}
 	}
 
@@ -201,6 +208,9 @@ func setFromFlagsEnv(f *Config) error {
 	}
 	if envValue := os.Getenv("ENABLE_HTTPS"); envValue != "" {
 		f.EnableHTTPS = envValue
+	}
+	if envValue := os.Getenv("TRUSTED_SUBNET"); envValue != "" {
+		f.TrustedSubnet = envValue
 	}
 
 	return nil

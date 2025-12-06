@@ -810,3 +810,87 @@ func internalLongURLFromShortLayerTx(w http.ResponseWriter, long string) {
 	w.Header().Set("Location", long)
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
+
+// --------------------------------
+// ---      internalStats       ---
+// --------------------------------
+
+// internalStatsLayerWork слой логики обработчика Stats. Возвращется количество сокращённых ссылок, количество пользователй в сервисе и ошибка.
+//
+// Параметры:
+//
+//	db - указатель на БД.
+//	sl - указатель сервиса.
+func internalStatsLayerWork(db *sql.DB, sl *ShortLong) (valueURLs, valueUsers int, err error) {
+
+	// Проверка аргументов.
+	if sl == nil {
+		log.Println("в аргументе sl, функции internalStatsLayerWork, нет указателя")
+		return 0, 0, ErrStatusInternalServerError
+	}
+	if sl.Log == nil {
+		log.Println("в аргументе sl.Log, функции internalStatsLayerWork, нет указателя")
+		return 0, 0, ErrStatusInternalServerError
+	}
+
+	// Логика.
+	//
+	// БД.
+	if db != nil {
+		valueURLs, err = valueEntriesDB(db)
+		if err != nil {
+			sl.Log.Error("ошибка в функции valueEntriesDB", zap.Error(err))
+			return 0, 0, ErrStatusInternalServerError
+
+		}
+	}
+
+	// in-memory.
+	if db == nil {
+		valueURLs = len(sl.List.LongByShort)
+	}
+
+	// Результат.
+	return valueURLs, int(sl.ValueConnect), nil
+}
+
+// internalStatsLayerTx слой формироания ответа обраблтчика Stats.
+//
+// Параметры:
+//
+//	w - интерфейс ответа.
+//	sl - указатель сервиса.
+//	valueURLs - количество сокращённых URL.
+//	valueUsers - количество пользователй в сервисе.
+func internalStatsLayerTx(w http.ResponseWriter, sl *ShortLong, valueURLs, valueUsers int) error {
+
+	// Проверка аргументов.
+	if sl == nil {
+		log.Println("Ошибка в функции internalStatsLayerTx. В аргументе sl, функции internalStatsLayerWork, нет указателя")
+		return ErrStatusInternalServerError
+	}
+	if sl.Log == nil {
+		log.Println("Ошибка в функции internalStatsLayerTx. В аргументе sl.Log, функции internalStatsLayerWork, нет указателя")
+		return ErrStatusInternalServerError
+	}
+
+	// Логика
+	var dataTx txStats
+
+	dataTx.URLs = valueURLs
+	dataTx.Users = valueUsers
+
+	byteTx, err := json.Marshal(dataTx)
+	if err != nil {
+		sl.Log.Error("Ошибка сериализации",
+			zap.String("функция", "internalStatsLayerTx"),
+			zap.String("err", err.Error()))
+		return ErrStatusInternalServerError
+	}
+
+	// Передача
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(byteTx)
+
+	return nil
+}

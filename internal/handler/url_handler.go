@@ -13,11 +13,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Part001-R/YaPrShortener/internal/service/flags"
@@ -65,6 +67,8 @@ type ShortLong struct {
 	wg               sync.WaitGroup // механизм для безопасного выполнения кода.
 	stopping         bool           // true - признак, что сервис в процессе остановки.
 	mu               sync.RWMutex
+	TrustedSubnet    string // доверенная подсеть.
+	ValueConnect     int32  // количество подключений.
 }
 
 // Для передачи содержимого файла в память.
@@ -102,6 +106,12 @@ type txShortURLOriginalURL struct {
 	OriginalURL string `json:"original_url"`
 }
 
+// Для передачи данных статистики.
+type txStats struct {
+	URLs  int `json:"urls"`  // количество сокращённых URL в сервисе
+	Users int `json:"users"` // количество пользователей в сервисе
+}
+
 type handlers interface {
 	ShortURLFromLong(w http.ResponseWriter, r *http.Request)
 	LongURLFromShort(w http.ResponseWriter, r *http.Request)
@@ -109,6 +119,7 @@ type handlers interface {
 	ShortURLFromLongBatch(w http.ResponseWriter, r *http.Request)
 	UserURLs(w http.ResponseWriter, r *http.Request)
 	DeleteUserURLs(w http.ResponseWriter, r *http.Request)
+	Stats(w http.ResponseWriter, r *http.Request)
 }
 
 type systemAct interface {
@@ -127,6 +138,8 @@ type file interface {
 type middleware interface {
 	Middleware(h http.Handler) http.Handler
 	MiddlewareAudit(h http.Handler) http.Handler
+	MiddlewareTrustSubnet(h http.Handler) http.Handler
+	MiddlewareCountConnect(next http.Handler) http.Handler
 }
 
 // Основной интерфейс.
@@ -140,6 +153,7 @@ type Actions interface {
 // Реализация проверки кодировки и формирование длительности выполнения обработчика запроса.
 func (sl *ShortLong) Middleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
 		ow := w
 
 		// Проверка поддерживает ли сервер запрашиваемую клиентом кодировку
@@ -269,6 +283,64 @@ func (sl *ShortLong) MiddlewareAudit(h http.Handler) http.Handler {
 		}
 		w.WriteHeader(recorder.Code)
 		w.Write(recorder.Body.Bytes())
+	})
+}
+
+// Реализация проверки IP адреса, на вхождение в доверенную подсеть.
+func (sl *ShortLong) MiddlewareTrustSubnet(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		// Проверка для /api/internal/stats
+		if r.URL.Path == "/api/internal/stats" {
+			clientIP := r.Header.Get("X-Real-IP")
+
+			if clientIP == "" {
+				sl.Log.Info("отклонён HTTP запрос",
+					zap.String("URI", r.RequestURI),
+					zap.String("метод", r.Method),
+					zap.String("причина", "нет данных в заголовке X-Real-IP"),
+				)
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+
+			if sl.TrustedSubnet == "" {
+				sl.Log.Info("отклонён HTTP запрос",
+					zap.String("URI", r.RequestURI),
+					zap.String("метод", r.Method),
+					zap.String("причина", "нет инициализации значения доверенной подсети"),
+				)
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+
+			if !sl.isTrustedIP(clientIP) {
+				sl.Log.Info("отклонён HTTP запрос",
+					zap.String("URI", r.RequestURI),
+					zap.String("метод", r.Method),
+					zap.String("причина", "IP не входит в доверенную подсеть"),
+					zap.String("IP", clientIP),
+				)
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+		}
+
+		// Передаем управление следующему обработчику
+		next.ServeHTTP(w, r)
+	})
+}
+
+// Контроль активных подключений к сервису.
+func (sl *ShortLong) MiddlewareCountConnect(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		// Косвенный контроль количества пользователей.
+		atomic.AddInt32(&sl.ValueConnect, 1)
+		defer atomic.AddInt32(&sl.ValueConnect, -1)
+
+		// Передаем управление следующему обработчику
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -441,6 +513,40 @@ func (sl *ShortLong) LoadFileURL() error {
 	return nil
 }
 
+// isTrustedIP проверяет, находится ли IP в доверенной подсети. Возвращается true - если да.
+func (sl *ShortLong) isTrustedIP(ipStr string) bool {
+
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+
+	_, subnet, err := net.ParseCIDR(sl.TrustedSubnet)
+	if err != nil {
+		return false
+	}
+
+	// Результат.
+	return subnet.Contains(ip)
+}
+
+// Предоставление информации:
+// - количество сокращённых URL в сервисе;
+// - количество пользователей в сервисе.
+//
+// GET /api/internal/stats
+func (sl *ShortLong) Stats(w http.ResponseWriter, r *http.Request) {
+
+	sl.List.mu.RLock()
+	defer sl.List.mu.RUnlock()
+
+	sl.wg.Add(1)
+	defer sl.wg.Done()
+
+	// Вся логика обработчика.
+	internalStats(sl.DB.Ptr, sl, w, r)
+}
+
 // ---
 
 // Ожидание завершения работы активных обработчиков.
@@ -538,7 +644,8 @@ var OnceShortener sync.Once
 //	fl - флаги.
 //	os - наблюдатель.
 //	log - логгер.
-func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os observer.Action, log *zap.Logger) Actions {
+//	trustedSubnet - доверенная подсеть.
+func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os observer.Action, log *zap.Logger, trustedSubnet string) Actions {
 	OnceShortener.Do(func() {
 		shortener = &ShortLong{
 			List:             storage,
@@ -551,6 +658,8 @@ func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os o
 			wg:               sync.WaitGroup{},
 			stopping:         false,
 			mu:               sync.RWMutex{},
+			TrustedSubnet:    trustedSubnet,
+			ValueConnect:     0,
 		}
 	})
 
@@ -1824,4 +1933,100 @@ func processingObserver(body []byte, path string, sl *ShortLong, locationHeader 
 	}
 
 	sl.Observer.Notify(auditEvent)
+}
+
+// Функция содержит логику обработчика Stats.
+//
+// Параметры:
+//
+//	db - указатель на БД
+//	sl - конфигурация.
+//	w - http.ResponseWriter.
+//	r - *http.Request.
+func internalStats(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Request) {
+
+	// Проверка аргументов.
+	if sl == nil {
+		log.Println("Ошибка в функции internalStats. В аргументе sl нет указателя")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if sl.Log == nil {
+		log.Println("Ошибка в функции internalStats. В аргументе sl.Log нет указателя")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if r == nil {
+		sl.Log.Error("Ошибка в функции internalStats. В аргументе r нет указателя")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if w == nil {
+		sl.Log.Error("Ошибка в функции internalStats. В аргументе w нет указателя")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Логика.
+	valueURLs, valueUsers, err := internalStatsLayerWork(db, sl)
+	if err != nil {
+		switch err.Error() {
+		case "500":
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		default:
+			sl.Log.Error("Код ошибки не опознан",
+				zap.String("code", err.Error()),
+				zap.String("method", r.Method),
+				zap.String("url", r.URL.String()),
+				zap.String("func", "internalStatsLayerWork"),
+			)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Ответ.
+	err = internalStatsLayerTx(w, sl, valueURLs, valueUsers)
+	if err != nil {
+		switch err.Error() {
+		case "500":
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		default:
+			sl.Log.Error("Код ошибки не опознан",
+				zap.String("code", err.Error()),
+				zap.String("method", r.Method),
+				zap.String("url", r.URL.String()),
+				zap.String("func", "internalStatsLayerTx"),
+			)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+// Функция запрашивает у БД количество записей с сокращёнными ссылками. Возвращается количество записей и ошибка.
+//
+// Параметры:
+//
+//	db - указатель на БД
+func valueEntriesDB(db *sql.DB) (int, error) {
+
+	// Проверка аргументов.
+	if db == nil {
+		return 0, errors.New("в аргументе db нет указателя")
+	}
+
+	// Логика.
+	req := `SELECT COALESCE(COUNT(*), 0) FROM shortener;`
+	var count int
+
+	err := db.QueryRow(req).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка при выполнении запроса: <%w>", err)
+	}
+
+	// Результат.
+	return count, nil
 }
