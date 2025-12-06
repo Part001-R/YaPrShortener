@@ -17,6 +17,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -610,7 +612,7 @@ func NewShortenerMemory() *ShortLongURL {
 var shortenrDB *ShortLongDB
 
 // Для обеспечения единоразового выполняения инициализации конструктором.
-var OnceDB sync.Once
+var onceDB sync.Once
 
 // Конструктор. Возвращает хранилище БД.
 //
@@ -618,7 +620,7 @@ var OnceDB sync.Once
 //
 //	db - указатель на БД.
 func NewShortenerDB(db *sql.DB) *ShortLongDB {
-	OnceDB.Do(func() {
+	onceDB.Do(func() {
 		shortenrDB = &ShortLongDB{
 			Ptr:         db,
 			mu:          sync.RWMutex{},
@@ -627,6 +629,24 @@ func NewShortenerDB(db *sql.DB) *ShortLongDB {
 		}
 	})
 	return shortenrDB
+}
+
+// ResetNewShortenerDB, реализует сброс экземплара. Возвращается true - если сброс выполнен.
+func ResetNewShortenerDB() bool {
+	// Определение места вызова функции.
+	_, file, _, ok := runtime.Caller(1) // 1 - получить вызывающую функцию
+	if !ok {
+		log.Fatal("Ошибка в функции InstReset. Не удалось получить информацию о файле")
+	}
+	fileName := path.Base(file)
+
+	// Проверка, что функция запускается из файла с тестами.
+	if strings.HasSuffix(fileName, "_test.go") {
+		onceDB = sync.Once{}
+		shortenrDB = nil
+		return true
+	}
+	return false
 }
 
 // Сконфигурироанный экземпляр сервиса.
@@ -664,6 +684,25 @@ func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os o
 	})
 
 	return shortener
+}
+
+// ResetNewShortener, реализует сброс экземплара. Возвращается true - если сброс выполнен.
+func ResetNewShortener() bool {
+
+	// Определение места вызова функции.
+	_, file, _, ok := runtime.Caller(1) // 1 - получить вызывающую функцию
+	if !ok {
+		log.Fatal("Ошибка в функции InstReset. Не удалось получить информацию о файле")
+	}
+	fileName := path.Base(file)
+
+	// Проверка, что функция запускается из файла с тестами.
+	if strings.HasSuffix(fileName, "_test.go") {
+		OnceShortener = sync.Once{}
+		shortener = nil
+		return true
+	}
+	return false
 }
 
 // Функция наполняет мапы новыми парами соответствий длинных и коротких ссылок. Возвращает короткую ссылку и ошибку.

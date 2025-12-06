@@ -2704,7 +2704,7 @@ func Test_Stats_Status(t *testing.T) {
 }
 
 // Проверка получения статистики.
-func Test_Stats_Request(t *testing.T) {
+func Test_Stats_InMemory(t *testing.T) {
 
 	// Подготовка.
 	//
@@ -2796,6 +2796,128 @@ func Test_Stats_Request(t *testing.T) {
 	}
 }
 
+// Проверка получения статистики.
+func Test_Stats_DB(t *testing.T) {
+
+	// Подготовка.
+	//
+	// Экземляр in memory
+	storage := &ShortLongURL{
+		ShorByLong:  map[string]string{},
+		LongByShort: map[string]string{},
+		mu:          sync.RWMutex{},
+	}
+
+	// БД
+	// Создание мок-объекта БД
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	ok := ResetNewShortenerDB() // Так как инициализация через sync.Once
+	require.Equalf(t, true, ok, "сброс не выполнен: <%t>", ok)
+
+	instDB := NewShortenerDB(db)
+
+	// Установка ожиданий на мок
+	mock.ExpectQuery(`SELECT COALESCE`).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
+
+	// Флаги
+	fl := &flags.Config{
+		Port:             ":8080",
+		BaseAddrShortURL: "http://localhost:8080/",
+		LogLevel:         "debug",
+		FileStoragePath:  "",
+		AuditFile:        "",
+		AuditURL:         "",
+		DSNDB:            "host=localhost port=5555 user=Foo password=Bar dbname=Oups_db sslmode=disable",
+		EnableHTTPS:      "false",
+		ConfigFile:       "",
+		TrustedSubnet:    "127.0.0.0/8",
+	}
+
+	// Конструктор логгера.
+	log, err := logger.NewLogger("Debug")
+	require.NoErrorf(t, err, "неожиданная ошибка при создании логгера: <%v>", err)
+
+	// Конструктор наблюдателя.
+	obsSrc := observer.NewObserver(log)
+
+	// Подготовка экземпляра.
+	ok = ResetNewShortener() // Так как инициализация через sync.Once
+	require.Equalf(t, true, ok, "сброс не выполнен: <%t>", ok)
+
+	inst := NewShortener(storage, instDB, fl, obsSrc, log, fl.TrustedSubnet)
+	assert.NotNil(t, inst, "отсутствует указатель")
+
+	// Данные для теста.
+	dataTest := []struct {
+		nameTest       string
+		IPTest         string
+		wantStatusCode int
+		wantData       txStats
+	}{
+		{
+			nameTest:       "Взаимодействие с БД.",
+			IPTest:         "127.0.0.10",
+			wantStatusCode: http.StatusOK,
+			wantData: txStats{
+				URLs:  3,
+				Users: 1,
+			},
+		},
+	}
+
+	// Тесты.
+	for _, tt := range dataTest {
+		t.Run(tt.nameTest, func(t *testing.T) {
+
+			// Подготовка обработчиков.
+			r := chi.NewRouter()
+			r.Use(inst.MiddlewareCountConnect)
+			r.Use(inst.MiddlewareTrustSubnet)
+			r.Use(inst.Middleware)
+			r.Get("/api/internal/stats", http.HandlerFunc(inst.Stats))
+
+			// Запрос.
+			req, err := http.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+			if err != nil {
+				require.NoErrorf(t, err, "ошибка при создании запроса: <%v>", err)
+			}
+			req.Header.Set("X-Real-IP", tt.IPTest)
+
+			// Рекордер.
+			res := httptest.NewRecorder()
+
+			// Вызов обработчика.
+			r.ServeHTTP(res, req)
+
+			resp := res.Result()
+			defer func() {
+				err := resp.Body.Close()
+				assert.NoErrorf(t, err, "ошибка закрытия потока {%v}", err)
+			}()
+
+			// Тело ответа.
+			rxByte, err := io.ReadAll(resp.Body)
+			require.NoErrorf(t, err, "ошибка при чтении тела запроса:<%v>", err)
+
+			var rxData txStats
+			err = json.Unmarshal(rxByte, &rxData)
+			require.NoErrorf(t, err, "ошибка десериализации:<%v>", err)
+
+			// Проверка.
+			require.Equalf(t, tt.wantStatusCode, res.Code, "ожидался код ответа:<%d>, а принят:<%d>", tt.wantStatusCode, res.Code)
+			assert.Equalf(t, tt.wantData.URLs, rxData.URLs, "для URLs ожидалось:<%d>, а принято:<%d>", tt.wantData.URLs, rxData.URLs)
+			assert.Equalf(t, tt.wantData.Users, rxData.Users, "для Users ожидалось:<%d>, а принято:<%d>", tt.wantData.Users, rxData.Users)
+		})
+	}
+	// Проверка ожиданий
+	err = mock.ExpectationsWereMet()
+	require.NoError(t, err, "не все ожидания были выполнены")
+}
+
 // ---
 
 // Конструкторы.
@@ -2808,6 +2930,9 @@ func Test_NewShortenerMemory_SUCCESS(t *testing.T) {
 }
 
 func Test_NewShortenerDB_SUCCESS(t *testing.T) {
+
+	ok := ResetNewShortenerDB()
+	require.Equalf(t, true, ok, "сброс не выполнен:<%t>", ok)
 
 	var db *sql.DB
 
