@@ -546,7 +546,7 @@ func (sl *ShortLong) Stats(w http.ResponseWriter, r *http.Request) {
 	defer sl.wg.Done()
 
 	// Вся логика обработчика.
-	internalStats(sl.DB.Ptr, sl, w, r)
+	internalStats(sl, w, r)
 }
 
 // ---
@@ -664,8 +664,7 @@ var OnceShortener sync.Once
 //	fl - флаги.
 //	os - наблюдатель.
 //	log - логгер.
-//	trustedSubnet - доверенная подсеть.
-func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os observer.Action, log *zap.Logger, trustedSubnet string) Actions {
+func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os observer.Action, log *zap.Logger) Actions {
 	OnceShortener.Do(func() {
 		shortener = &ShortLong{
 			List:             storage,
@@ -678,7 +677,7 @@ func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os o
 			wg:               sync.WaitGroup{},
 			stopping:         false,
 			mu:               sync.RWMutex{},
-			TrustedSubnet:    trustedSubnet,
+			TrustedSubnet:    fl.TrustedSubnet,
 			ValueConnect:     0,
 		}
 	})
@@ -1978,11 +1977,10 @@ func processingObserver(body []byte, path string, sl *ShortLong, locationHeader 
 //
 // Параметры:
 //
-//	db - указатель на БД
 //	sl - конфигурация.
 //	w - http.ResponseWriter.
 //	r - *http.Request.
-func internalStats(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Request) {
+func internalStats(sl *ShortLong, w http.ResponseWriter, r *http.Request) {
 
 	// Проверка аргументов.
 	if sl == nil {
@@ -2007,7 +2005,7 @@ func internalStats(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Req
 	}
 
 	// Логика.
-	valueURLs, valueUsers, err := internalStatsLayerWork(db, sl)
+	valueURLs, valueUsers, err := internalStatsLayerWork(sl)
 	if err != nil {
 		switch err.Error() {
 		case "500":
@@ -2049,23 +2047,41 @@ func internalStats(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Req
 //
 // Параметры:
 //
-//	db - указатель на БД
-func valueEntriesDB(db *sql.DB) (int, error) {
+//	sl - указатель на конфигурацию сервиса.
+func valueEntriesDB(sl *ShortLong) (int, error) {
 
 	// Проверка аргументов.
-	if db == nil {
+	if sl.DB.Ptr == nil {
 		return 0, errors.New("в аргументе db нет указателя")
 	}
+
+	sl.DB.mu.RLock()
+	defer sl.DB.mu.RUnlock()
 
 	// Логика.
 	req := `SELECT COALESCE(COUNT(*), 0) FROM shortener;`
 	var count int
 
-	err := db.QueryRow(req).Scan(&count)
+	err := sl.DB.Ptr.QueryRow(req).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("ошибка при выполнении запроса: <%w>", err)
 	}
 
 	// Результат.
 	return count, nil
+}
+
+// Функция запрашивает у in-memory количество записей с сокращёнными ссылками. Возвращается количество записей и ошибка.
+//
+// Параметры:
+//
+//	sl - указатель на конфигурацию сервиса.
+func valueEntriesInMemory(sl *ShortLong) (int, error) {
+
+	sl.List.mu.RLock()
+	defer sl.List.mu.RUnlock()
+
+	valueURLs := len(sl.List.LongByShort)
+
+	return valueURLs, nil
 }

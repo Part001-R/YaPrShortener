@@ -2814,7 +2814,7 @@ func Test_Stats_DB(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	ok := ResetNewShortenerDB() // Так как инициализация через sync.Once
+	ok := ResetNewShortenerDB() // Так как инициализация через sync.Once (функция работает только в файлах *_test.go)
 	require.Equalf(t, true, ok, "сброс не выполнен: <%t>", ok)
 
 	instDB := NewShortenerDB(db)
@@ -2848,7 +2848,7 @@ func Test_Stats_DB(t *testing.T) {
 	ok = ResetNewShortener() // Так как инициализация через sync.Once
 	require.Equalf(t, true, ok, "сброс не выполнен: <%t>", ok)
 
-	inst := NewShortener(storage, instDB, fl, obsSrc, log, fl.TrustedSubnet)
+	inst := NewShortener(storage, instDB, fl, obsSrc, log)
 	assert.NotNil(t, inst, "отсутствует указатель")
 
 	// Данные для теста.
@@ -2979,7 +2979,7 @@ func Test_NewShortener_SUCCESS(t *testing.T) {
 	obsSrc := observer.NewObserver(log)
 
 	// Тест.
-	inst := NewShortener(storage, instDB, fl, obsSrc, log, "")
+	inst := NewShortener(storage, instDB, fl, obsSrc, log)
 	assert.NotNil(t, inst, "отсутствует указатель")
 }
 
@@ -3204,7 +3204,7 @@ func constructor() (Actions, error) {
 	obsSrc := observer.NewObserver(log)
 
 	// Конструктор сервиса.
-	return NewShortener(storage, instDB, fl, obsSrc, log, ""), nil
+	return NewShortener(storage, instDB, fl, obsSrc, log), nil
 }
 
 // constructorDB, конструктор сервиса, для тестов. Возвращает интерфейс, mock БД и ошибку.
@@ -3247,5 +3247,5 @@ func constructorDB() (Actions, sqlmock.Sqlmock, error) {
 	obsSrc := observer.NewObserver(log)
 
 	// Конструктор сервиса.
-	return NewShortener(storage, instDB, fl, obsSrc, log, ""), mock, nil
+	return NewShortener(storage, instDB, fl, obsSrc, log), mock, nil
 }

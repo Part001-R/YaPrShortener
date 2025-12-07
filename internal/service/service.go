@@ -102,7 +102,7 @@ func prepare() (*paramsURL, error) {
 	shortLong := handler.NewShortenerMemory()
 	shortLongDB := handler.NewShortenerDB(dbPtr)
 
-	storageLongShort := handler.NewShortener(shortLong, shortLongDB, flags, observer, log, flags.TrustedSubnet)
+	storageLongShort := handler.NewShortener(shortLong, shortLongDB, flags, observer, log)
 	err = storageLongShort.LoadFileURL()
 	if err != nil {
 		return &paramsURL{}, fmt.Errorf("ошибка в prepare: функция storageLongShort.LoadFileURL вернула ошибку -> <%w>", err)

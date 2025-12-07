@@ -819,9 +819,8 @@ func internalLongURLFromShortLayerTx(w http.ResponseWriter, long string) {
 //
 // Параметры:
 //
-//	db - указатель на БД.
-//	sl - указатель сервиса.
-func internalStatsLayerWork(db *sql.DB, sl *ShortLong) (valueURLs, valueUsers int, err error) {
+//	sl - указатель на конфигурацию сервиса.
+func internalStatsLayerWork(sl *ShortLong) (valueURLs, valueUsers int, err error) {
 
 	// Проверка аргументов.
 	if sl == nil {
@@ -836,8 +835,8 @@ func internalStatsLayerWork(db *sql.DB, sl *ShortLong) (valueURLs, valueUsers in
 	// Логика.
 	//
 	// БД.
-	if db != nil {
-		valueURLs, err = valueEntriesDB(db)
+	if sl.DB.Ptr != nil {
+		valueURLs, err = valueEntriesDB(sl)
 		if err != nil {
 			sl.Log.Error("ошибка в функции valueEntriesDB", zap.Error(err))
 			return 0, 0, ErrStatusInternalServerError
@@ -846,8 +845,13 @@ func internalStatsLayerWork(db *sql.DB, sl *ShortLong) (valueURLs, valueUsers in
 	}
 
 	// in-memory.
-	if db == nil {
-		valueURLs = len(sl.List.LongByShort)
+	if sl.DB.Ptr == nil {
+		valueURLs, err = valueEntriesInMemory(sl)
+		if err != nil {
+			sl.Log.Error("ошибка в функции valueEntriesInMemory", zap.Error(err))
+			return 0, 0, ErrStatusInternalServerError
+
+		}
 	}
 
 	// Результат.
@@ -866,11 +870,19 @@ func internalStatsLayerTx(w http.ResponseWriter, sl *ShortLong, valueURLs, value
 
 	// Проверка аргументов.
 	if sl == nil {
-		log.Println("Ошибка в функции internalStatsLayerTx. В аргументе sl, функции internalStatsLayerWork, нет указателя")
+		log.Println("Ошибка в функции internalStatsLayerTx. В аргументе sl, функции internalStatsLayerWork, нет указателя.")
 		return ErrStatusInternalServerError
 	}
 	if sl.Log == nil {
-		log.Println("Ошибка в функции internalStatsLayerTx. В аргументе sl.Log, функции internalStatsLayerWork, нет указателя")
+		log.Println("Ошибка в функции internalStatsLayerTx. В аргументе sl.Log, функции internalStatsLayerWork, нет указателя.")
+		return ErrStatusInternalServerError
+	}
+	if valueURLs < 0 {
+		sl.Log.Error("Ошибка в функции internalStatsLayerTx. Значение в аргументе valueURLs, меньше нуля.")
+		return ErrStatusInternalServerError
+	}
+	if valueUsers < 0 {
+		sl.Log.Error("Ошибка в функции internalStatsLayerTx. Значение в аргументе valueUsers, меньше нуля.")
 		return ErrStatusInternalServerError
 	}
 
