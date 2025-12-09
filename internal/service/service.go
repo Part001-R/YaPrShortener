@@ -5,12 +5,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/Part001-R/YaPrShortener/internal/handler"
+	"github.com/Part001-R/YaPrShortener/internal/rpc/servicerpc"
 	"github.com/Part001-R/YaPrShortener/internal/service/db"
 	config "github.com/Part001-R/YaPrShortener/internal/service/flags"
 	"github.com/Part001-R/YaPrShortener/internal/service/logger"
@@ -20,13 +23,16 @@ import (
 	"github.com/Part001-R/YaPrShortener/internal/service/sertificat/serthttps"
 	"github.com/go-chi/chi"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+
+	pb "github.com/Part001-R/YaPrShortener/proto/service"
 )
 
 // Параметры сервиса.
 type paramsURL struct {
 	flags            *config.Config
 	closeConDB       func()
-	storageLongShort handler.Actions
+	storageLongShort handler.ActionsHTTP
 	shortLongDB      *handler.ShortLongDB
 	log              *zap.Logger
 }
@@ -102,7 +108,7 @@ func prepare() (*paramsURL, error) {
 	shortLong := handler.NewShortenerMemory()
 	shortLongDB := handler.NewShortenerDB(dbPtr)
 
-	storageLongShort := handler.NewShortener(shortLong, shortLongDB, flags, observer, log)
+	storageLongShort := handler.NewShortenerActions(shortLong, shortLongDB, flags, observer, log)
 	err = storageLongShort.LoadFileURL()
 	if err != nil {
 		return &paramsURL{}, fmt.Errorf("ошибка в prepare: функция storageLongShort.LoadFileURL вернула ошибку -> <%w>", err)
@@ -229,6 +235,43 @@ func startUpHTTPSServer(srv *http.Server, txErr chan error, log *zap.Logger) {
 	txErr <- err
 }
 
+// startUpRPCServer, выполняет запуск RPC сервера.
+//
+// Параметры:
+//
+//	params - параметры сервиса.
+//	txErr - канал для передачи ошибки.
+//	port - порт для запуска.
+func startUpRPCServer(params *handler.ShortLong, txErr chan error, port string) {
+
+	// Проверка параметров.
+	if txErr == nil {
+		log.Fatal("в функции startUpRPCServer, в параметре txErr, нет указателя на канал")
+	}
+	if params == nil {
+		txErr <- ErrNilParams
+		return
+	}
+
+	// Прослушивание порта.
+	lis, err := net.Listen("tcp", port)
+	if err != nil {
+		txErr <- fmt.Errorf("ошибка прослушивания tcp порта, при запуске RPC сервера: <%v>", err)
+		return
+	}
+
+	// Получение экземпляра и параметрирование.
+	s := grpc.NewServer()
+	pb.RegisterShortenerServiceServer(s, &servicerpc.ShortenerService{Conf: params})
+
+	// Запуск.
+	params.Log.Info("Запуск RPC сервера", zap.String("address", port))
+
+	if err := s.Serve(lis); err != nil {
+		txErr <- fmt.Errorf("ошибка работы RPC сервера: <%v>", err)
+	}
+}
+
 // signalsStopRun определяет причину остановки выполнения. При штатной остановке, сохраняются метрики.
 //
 // Параметры:
@@ -328,12 +371,16 @@ func actions(params *paramsURL, cr *chi.Mux) error {
 		params:       params,
 	}
 
-	// Запуск сервера.
+	// Запуск HTTP-HTTPS сервера.
 	if params.flags.EnableHTTPS == "true" {
 		go startUpHTTPSServer(srvConf, chSrvErr, params.log)
 	} else {
 		go startUpHTTPServer(srvConf, chSrvErr, params.log)
 	}
+
+	// Запуск RPC сервера.
+	conf := handler.ShortenerForRPC() // Получение указателя на конфигурацию сервиса.
+	go startUpRPCServer(conf, chSrvErr, ":65010")
 
 	// Запуск обработчика асинхронной очистки таблицы shortener БД.
 	params.storageLongShort.WGAdd() // wg.Add(1)

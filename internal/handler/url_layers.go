@@ -354,16 +354,16 @@ func internalShortURLFromLongBatchLayerTx(w http.ResponseWriter, shortBatch []tx
 //
 //	r - интерфейс приёма.
 //	logger - логгер.
-func internalShortURLFromLongJSONLayerRx(r *http.Request, logger *zap.Logger) (rxLong rxLongURL, uuidRx string, err error) {
+func internalShortURLFromLongJSONLayerRx(r *http.Request, logger *zap.Logger) (rxLong RxLongURL, uuidRx string, err error) {
 
 	// Проверка аргументов.
 	if logger == nil {
 		log.Println("в аргументе logger, функции internalShortURLFromLongJSONLayerRx, нет указателя")
-		return rxLongURL{}, "", ErrStatusInternalServerError
+		return RxLongURL{}, "", ErrStatusInternalServerError
 	}
 	if r == nil {
 		logger.Error("в аргументе r нет указателя")
-		return rxLongURL{}, "", ErrStatusInternalServerError
+		return RxLongURL{}, "", ErrStatusInternalServerError
 	}
 
 	// Логика.
@@ -383,19 +383,19 @@ func internalShortURLFromLongJSONLayerRx(r *http.Request, logger *zap.Logger) (r
 			zap.String("method", r.Method),
 			zap.String("url", r.URL.String()),
 		)
-		return rxLongURL{}, "", ErrStatusInternalServerError
+		return RxLongURL{}, "", ErrStatusInternalServerError
 	}
 	if len(rxData) == 0 {
-		return rxLongURL{}, "", ErrStatusBadRequest
+		return RxLongURL{}, "", ErrStatusBadRequest
 	}
 
-	var rxJSON = rxLongURL{}
+	var rxJSON = RxLongURL{}
 	err = json.Unmarshal(rxData, &rxJSON)
 	if err != nil {
-		return rxLongURL{}, "", ErrStatusBadRequest
+		return RxLongURL{}, "", ErrStatusBadRequest
 	}
 	if rxJSON.URL == "" {
-		return rxLongURL{}, "", ErrStatusBadRequest
+		return RxLongURL{}, "", ErrStatusBadRequest
 	}
 
 	// Результат.
@@ -405,15 +405,14 @@ func internalShortURLFromLongJSONLayerRx(r *http.Request, logger *zap.Logger) (r
 	return rxLong, uuidRx, nil
 }
 
-// internalShortURLFromLongJSONLayerWork слой основной логики для обработчика ShortURLFromLongJSON. Возвращается короткое представление URL, флаг конфликта и ошибка.
+// InternalShortURLFromLongJSONLayerWork слой основной логики для обработчика ShortURLFromLongJSON. Возвращается короткое представление URL, флаг конфликта и ошибка.
 //
 // Параметры:
 //
-//	db - указатель на БД.
 //	sl - указатель на сервис.
 //	rxJSON - принятое значение длинного URL.
 //	uuidRx - принятый ID.
-func internalShortURLFromLongJSONLayerWork(db *sql.DB, sl *ShortLong, rxJSON rxLongURL, uuidRx string) (short string, flagConflict bool, err error) {
+func InternalShortURLFromLongJSONLayerWork(sl *ShortLong, rxJSON RxLongURL, uuidRx string) (short string, flagConflict bool, err error) {
 
 	// Проверка аргументов.
 	if sl == nil {
@@ -425,13 +424,16 @@ func internalShortURLFromLongJSONLayerWork(db *sql.DB, sl *ShortLong, rxJSON rxL
 		return "", false, ErrStatusInternalServerError
 	}
 
+	sl.muF.muInternalShortURLFromLongJSONLayerWork.Lock()
+	defer sl.muF.muInternalShortURLFromLongJSONLayerWork.Unlock()
+
 	// Логика.
 	errUniqueLong := `pq: duplicate key value violates unique constraint "idx_shortener_long"` // Ошибка по уникальности значения длинного представления.
 
-	shortURL, err := workWithRxData(db, sl, rxJSON.URL, uuidRx)
+	shortURL, err := workWithRxData(sl.DB.Ptr, sl, rxJSON.URL, uuidRx)
 	if err != nil && errors.Unwrap(err).Error() == errUniqueLong {
 
-		shortURL, err = readShortByLongDB(db, rxJSON.URL)
+		shortURL, err = readShortByLongDB(sl.DB.Ptr, rxJSON.URL)
 		if err != nil {
 			sl.Log.Error("Ошибка в функции readShortByLongDB",
 				zap.Error(err),
@@ -449,6 +451,7 @@ func internalShortURLFromLongJSONLayerWork(db *sql.DB, sl *ShortLong, rxJSON rxL
 	// Ответ.
 	flagConflict = false
 	short = sl.BaseAddrShortURL + shortURL
+
 	return short, flagConflict, nil
 }
 
@@ -506,13 +509,12 @@ func internalShortURLFromLongJSONLayerTx(w http.ResponseWriter, short string, fl
 // --- internalUserURLs ---
 // ------------------------
 
-// internalUserURLsLayerWork слой основной логики для обработчика UserURLs. Возвращается массив пар соответствий и ошибка.
+// InternalUserURLsLayerWork слой основной логики для обработчика UserURLs. Возвращается массив пар соответствий и ошибка.
 //
 // Параметры:
 //
-//	db - указатель на БД.
 //	sl - указателль на ссервис.
-func internalUserURLsLayerWork(db *sql.DB, sl *ShortLong) ([]txShortURLOriginalURL, error) {
+func InternalUserURLsLayerWork(sl *ShortLong) ([]txShortURLOriginalURL, error) {
 
 	// Проверка аргументов.
 	if sl == nil {
@@ -520,13 +522,16 @@ func internalUserURLsLayerWork(db *sql.DB, sl *ShortLong) ([]txShortURLOriginalU
 		return nil, ErrStatusInternalServerError
 	}
 
+	sl.muF.muInternalUserURLsLayerWork.Lock()
+	defer sl.muF.muInternalUserURLsLayerWork.Unlock()
+
 	// Логика.
 	el := txShortURLOriginalURL{}
 	shortLong := make([]txShortURLOriginalURL, 0)
 
-	if db != nil { // БД.
+	if sl.DB.Ptr != nil { // БД.
 
-		shortLongDB, err := GetAllShortenerDB(db, sl.Log)
+		shortLongDB, err := GetAllShortenerDB(sl.DB.Ptr, sl.Log)
 		if err != nil {
 			sl.Log.Error("Ошибка в функции GetAllShortenerDB",
 				zap.Error(err),
@@ -541,7 +546,7 @@ func internalUserURLsLayerWork(db *sql.DB, sl *ShortLong) ([]txShortURLOriginalU
 			shortLong = append(shortLong, el)
 		}
 
-		if err := ClearShortenerTable(db); err != nil { // Очистка таблицы.
+		if err := ClearShortenerTable(sl.DB.Ptr); err != nil { // Очистка таблицы.
 			sl.Log.Error("Ошибка в функции ClearShortenerTable",
 				zap.Error(err),
 			)
@@ -550,7 +555,7 @@ func internalUserURLsLayerWork(db *sql.DB, sl *ShortLong) ([]txShortURLOriginalU
 
 	}
 
-	if db == nil { // Мапы.
+	if sl.DB.Ptr == nil { // Мапы.
 
 		for k, v := range sl.List.LongByShort {
 			el.ShortURL = sl.BaseAddrShortURL + k
@@ -741,14 +746,13 @@ func internalLongURLFromShortLayerRx(r *http.Request, logger *zap.Logger) (strin
 	return rxData, nil
 }
 
-// internalLongURLFromShortLayerWork слой логики обработчика LongURLFromShort. Возвращется сформированное значение длинного URL и ошибка.
+// InternalLongURLFromShortLayerWork слой логики обработчика LongURLFromShort. Возвращется сформированное значение длинного URL и ошибка.
 //
 // Параметры:
 //
-//	db - указатель на БД.
 //	sl - указатель сервиса.
 //	short - принятое сокращённое значение.
-func internalLongURLFromShortLayerWork(db *sql.DB, sl *ShortLong, short string) (string, error) {
+func InternalLongURLFromShortLayerWork(sl *ShortLong, short string) (string, error) {
 
 	// Проверка аргументов.
 	if sl == nil {
@@ -760,16 +764,19 @@ func internalLongURLFromShortLayerWork(db *sql.DB, sl *ShortLong, short string) 
 		return "", ErrStatusBadRequest
 	}
 
+	sl.muF.muInternalLongURLFromShortLayerWork.Lock()
+	defer sl.muF.muInternalLongURLFromShortLayerWork.Unlock()
+
 	// Логика.
 	var long string
 	var err error
 	var ok bool
 
-	if db != nil { // БД.
+	if sl.DB.Ptr != nil { // БД.
 
 		myErr := fmt.Sprintf("строка с: <%s> не найдена", short)
 
-		long, err = readLongAndFlagByShortDB(db, short)
+		long, err = readLongAndFlagByShortDB(sl.DB.Ptr, short)
 		if err != nil && err.Error() == myErr {
 			return "", ErrStatusNotFound // Если запись в БД нет.
 		}
@@ -785,7 +792,7 @@ func internalLongURLFromShortLayerWork(db *sql.DB, sl *ShortLong, short string) 
 		}
 	}
 
-	if db == nil { // Мапа.
+	if sl.DB.Ptr == nil { // Мапа.
 
 		long, ok = sl.List.LongByShort[short]
 		if !ok {

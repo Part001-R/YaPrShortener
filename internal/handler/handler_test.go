@@ -285,7 +285,7 @@ func Test_ShortURLFromLongJSON_SUCCESS(t *testing.T) {
 	require.NoErrorf(t, err, "неожиданная ошибка в функции constructor:<%v>", err)
 
 	// Подготовка.
-	testData := rxLongURL{URL: "https://practicum.yandex.ru"}
+	testData := RxLongURL{URL: "https://practicum.yandex.ru"}
 
 	txData, err := json.Marshal(testData)
 	require.NoErrorf(t, err, "ожидалось отсутствие ошибка при маршалинге, а принято <%v>", err)
@@ -321,7 +321,12 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 			LongByShort: make(map[string]string),
 			mu:          sync.RWMutex{},
 		},
-		DB:               &ShortLongDB{},
+		DB: &ShortLongDB{
+			Ptr:         &sql.DB{},
+			mu:          sync.RWMutex{},
+			ChForDelete: make(chan DeleteDB),
+			ChDoDelete:  make(chan struct{}),
+		},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -333,7 +338,7 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 		urlT           string
 		methodReqT     string
 		contentTypeT   string
-		longURLT       rxLongURL
+		longURLT       RxLongURL
 		useDBT         bool
 		initMockT      func(mock sqlmock.Sqlmock)
 		wantStatusCode int
@@ -344,7 +349,7 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 			urlT:         "http://localhost:8080/api/shorten",
 			methodReqT:   http.MethodPost,
 			contentTypeT: `application/json`,
-			longURLT:     rxLongURL{URL: "https://practicum.yandex.ru"},
+			longURLT:     RxLongURL{URL: "https://practicum.yandex.ru"},
 			useDBT:       true,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
@@ -358,7 +363,7 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 			urlT:         "http://localhost:8080/api/shorten",
 			methodReqT:   http.MethodPost,
 			contentTypeT: `application/json`,
-			longURLT:     rxLongURL{URL: "https://practicum.yandex.ru"},
+			longURLT:     RxLongURL{URL: "https://practicum.yandex.ru"},
 			useDBT:       false,
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
@@ -376,6 +381,8 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 			require.NoError(t, err)
 			defer db.Close()
 
+			conf.DB.Ptr = db
+
 			tt.initMockT(mock)
 
 			txData, err := json.Marshal(tt.longURLT)
@@ -389,10 +396,10 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 			req.Header.Set("Content-Type", tt.contentTypeT)
 
 			if !tt.useDBT {
-				db = nil
+				conf.DB.Ptr = nil
 			}
 
-			internalShortURLFromLongJSON(db, conf, res, req)
+			internalShortURLFromLongJSON(conf, res, req)
 
 			resp := res.Result()
 			defer func() {
@@ -455,7 +462,12 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 			LongByShort: make(map[string]string),
 			mu:          sync.RWMutex{},
 		},
-		DB:               &ShortLongDB{},
+		DB: &ShortLongDB{
+			Ptr:         &sql.DB{},
+			mu:          sync.RWMutex{},
+			ChForDelete: make(chan DeleteDB),
+			ChDoDelete:  make(chan struct{}),
+		},
 		BaseAddrShortURL: ":8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -466,7 +478,7 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 		nameT          string
 		urlT           string
 		methodReqT     string
-		longURLT       rxLongURL
+		longURLT       RxLongURL
 		initMockT      func(mock sqlmock.Sqlmock)
 		useConfT       bool
 		contentTypeT   string
@@ -476,7 +488,7 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 			nameT:      "пустое тело",
 			urlT:       "http://localhost:8080/",
 			methodReqT: http.MethodPost,
-			longURLT:   rxLongURL{},
+			longURLT:   RxLongURL{},
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
 					WithArgs("https://practicum.yandex.ru/", sqlmock.AnyArg(), sqlmock.AnyArg()).
@@ -490,7 +502,7 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 			nameT:      "Неподдерживаемый тип контента",
 			urlT:       "http://localhost:8080/",
 			methodReqT: http.MethodPost,
-			longURLT:   rxLongURL{URL: "https://practicum.yandex.ru"},
+			longURLT:   RxLongURL{URL: "https://practicum.yandex.ru"},
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
 					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg(), sqlmock.AnyArg()).
@@ -504,7 +516,7 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 			nameT:      "Нет указателя на конфигурацию",
 			urlT:       "http://localhost:8080/",
 			methodReqT: http.MethodPost,
-			longURLT:   rxLongURL{URL: "https://practicum.yandex.ru"},
+			longURLT:   RxLongURL{URL: "https://practicum.yandex.ru"},
 			initMockT: func(mock sqlmock.Sqlmock) {
 				mock.ExpectExec("INSERT INTO").
 					WithArgs("https://practicum.yandex.ru", sqlmock.AnyArg()).
@@ -523,6 +535,8 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 			require.NoError(t, err)
 			defer db.Close()
 
+			conf.DB.Ptr = db
+
 			tt.initMockT(mock)
 
 			txData, err := json.Marshal(tt.longURLT)
@@ -539,7 +553,7 @@ func Test_internalShortURLFromLongJSON_FAULT(t *testing.T) {
 				conf = nil
 			}
 
-			internalShortURLFromLongJSON(db, conf, res, req)
+			internalShortURLFromLongJSON(conf, res, req)
 
 			resp := res.Result()
 			defer func() {
@@ -751,7 +765,7 @@ func Test_LongURLFromShort_SUCCESS(t *testing.T) {
 func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 
 	log, err := logger.NewLogger("Debug")
-	require.NoErrorf(t, err, "неожтданная ошибка при создании логгера: <%v>", err)
+	require.NoErrorf(t, err, "неожиданная ошибка при создании логгера: <%v>", err)
 
 	conf := &ShortLong{
 		List: &ShortLongURL{
@@ -759,7 +773,12 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 			LongByShort: make(map[string]string),
 			mu:          sync.RWMutex{},
 		},
-		DB:               &ShortLongDB{},
+		DB: &ShortLongDB{
+			Ptr:         &sql.DB{},
+			mu:          sync.RWMutex{},
+			ChForDelete: make(chan DeleteDB),
+			ChDoDelete:  make(chan struct{}),
+		},
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -784,6 +803,7 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 		initMockT      func(mock sqlmock.Sqlmock)
 		wantStatusCode int
 	}{
+
 		{
 			nameT:      "БД. Без взведённого флага delete",
 			urlT:       conf.BaseAddrShortURL + code,
@@ -837,11 +857,13 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 			req := httptest.NewRequest(tt.methodReqT, tt.urlT, nil)
 			res := httptest.NewRecorder()
 
+			conf.DB.Ptr = db
+
 			if !tt.useDBT {
-				db = nil
+				conf.DB.Ptr = nil
 			}
 
-			internalLongURLFromShort(db, conf, res, req)
+			internalLongURLFromShort(conf, res, req)
 
 			resp := res.Result()
 			defer func() {
@@ -937,7 +959,7 @@ func Test_internalLongURLFromShort_FAULT(t *testing.T) {
 				conf = nil
 			}
 
-			internalLongURLFromShort(db, conf, res, req)
+			internalLongURLFromShort(conf, res, req)
 
 			resp := res.Result()
 			defer func() {
@@ -1028,7 +1050,12 @@ func Test_internalUserURLs_SUCCESS(t *testing.T) {
 			LongByShort: make(map[string]string),
 			mu:          sync.RWMutex{},
 		},
-		DB:               &ShortLongDB{},
+		DB: &ShortLongDB{
+			Ptr:         &sql.DB{},
+			mu:          sync.RWMutex{},
+			ChForDelete: make(chan DeleteDB),
+			ChDoDelete:  make(chan struct{}),
+		},
 		BaseAddrShortURL: "http://localhost:8080/",
 		ServerAddr:       ":8080",
 		FileStoragePath:  "storage.json",
@@ -1065,7 +1092,8 @@ func Test_internalUserURLs_SUCCESS(t *testing.T) {
 			req := httptest.NewRequest(tt.methodReqT, tt.urlT, nil)
 			res := httptest.NewRecorder()
 
-			internalUserURLs(nil, conf, res, req)
+			conf.DB.Ptr = nil
+			internalUserURLs(conf, res, req)
 
 			resp := res.Result()
 			defer func() {
@@ -2848,7 +2876,7 @@ func Test_Stats_DB(t *testing.T) {
 	ok = ResetNewShortener() // Так как инициализация через sync.Once
 	require.Equalf(t, true, ok, "сброс не выполнен: <%t>", ok)
 
-	inst := NewShortener(storage, instDB, fl, obsSrc, log)
+	inst := NewShortenerActions(storage, instDB, fl, obsSrc, log)
 	assert.NotNil(t, inst, "отсутствует указатель")
 
 	// Данные для теста.
@@ -2979,7 +3007,7 @@ func Test_NewShortener_SUCCESS(t *testing.T) {
 	obsSrc := observer.NewObserver(log)
 
 	// Тест.
-	inst := NewShortener(storage, instDB, fl, obsSrc, log)
+	inst := NewShortenerActions(storage, instDB, fl, obsSrc, log)
 	assert.NotNil(t, inst, "отсутствует указатель")
 }
 
@@ -3168,7 +3196,7 @@ func Test_AsyncDeleteWGDone_SUCCESS(t *testing.T) {
 // ---
 
 // constructor, конструктор сервиса, для тестов. Возвращает интерфейс и ошибка.
-func constructor() (Actions, error) {
+func constructor() (ActionsHTTP, error) {
 
 	// Флаги
 	fl := &flags.Config{
@@ -3204,11 +3232,11 @@ func constructor() (Actions, error) {
 	obsSrc := observer.NewObserver(log)
 
 	// Конструктор сервиса.
-	return NewShortener(storage, instDB, fl, obsSrc, log), nil
+	return NewShortenerActions(storage, instDB, fl, obsSrc, log), nil
 }
 
 // constructorDB, конструктор сервиса, для тестов. Возвращает интерфейс, mock БД и ошибку.
-func constructorDB() (Actions, sqlmock.Sqlmock, error) {
+func constructorDB() (ActionsHTTP, sqlmock.Sqlmock, error) {
 
 	// Флаги
 	fl := &flags.Config{
@@ -3247,5 +3275,5 @@ func constructorDB() (Actions, sqlmock.Sqlmock, error) {
 	obsSrc := observer.NewObserver(log)
 
 	// Конструктор сервиса.
-	return NewShortener(storage, instDB, fl, obsSrc, log), mock, nil
+	return NewShortenerActions(storage, instDB, fl, obsSrc, log), mock, nil
 }

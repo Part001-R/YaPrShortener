@@ -57,6 +57,13 @@ type ShortLongDB struct {
 	ChDoDelete  chan struct{}
 }
 
+// Мьютексы для общих функция для HTTP и RPC.
+type muFunc struct {
+	muInternalShortURLFromLongJSONLayerWork sync.Mutex
+	muInternalLongURLFromShortLayerWork     sync.Mutex
+	muInternalUserURLsLayerWork             sync.Mutex
+}
+
 // Сервис сокращения ссылок.
 type ShortLong struct {
 	List             *ShortLongURL
@@ -71,6 +78,7 @@ type ShortLong struct {
 	mu               sync.RWMutex
 	TrustedSubnet    string // доверенная подсеть.
 	ValueConnect     int32  // количество подключений.
+	muF              muFunc // мьютексы для общих функций для HTTP и RPC.
 }
 
 // Для передачи содержимого файла в память.
@@ -81,7 +89,7 @@ type EventURL struct {
 }
 
 // Для длинного представления URL.
-type rxLongURL struct {
+type RxLongURL struct {
 	URL string `json:"url"`
 }
 
@@ -114,7 +122,7 @@ type txStats struct {
 	Users int `json:"users"` // количество пользователей в сервисе
 }
 
-type handlers interface {
+type handlersHTTP interface {
 	ShortURLFromLong(w http.ResponseWriter, r *http.Request)
 	LongURLFromShort(w http.ResponseWriter, r *http.Request)
 	ShortURLFromLongJSON(w http.ResponseWriter, r *http.Request)
@@ -124,7 +132,7 @@ type handlers interface {
 	Stats(w http.ResponseWriter, r *http.Request)
 }
 
-type systemAct interface {
+type systemActHTTP interface {
 	PingDB(w http.ResponseWriter, r *http.Request)
 	WaitFinActions()
 	SetFlagStopping()
@@ -133,23 +141,23 @@ type systemAct interface {
 	IsFlagStopping() bool
 }
 
-type file interface {
+type fileHTTP interface {
 	LoadFileURL() error
 }
 
-type middleware interface {
+type middlewareHTTP interface {
 	Middleware(h http.Handler) http.Handler
 	MiddlewareAudit(h http.Handler) http.Handler
 	MiddlewareTrustSubnet(h http.Handler) http.Handler
 	MiddlewareCountConnect(next http.Handler) http.Handler
 }
 
-// Основной интерфейс.
-type Actions interface {
-	middleware
-	systemAct
-	handlers
-	file
+// Основной интерфейс HTTP.
+type ActionsHTTP interface {
+	middlewareHTTP
+	systemActHTTP
+	handlersHTTP
+	fileHTTP
 }
 
 // Реализация проверки кодировки и формирование длительности выполнения обработчика запроса.
@@ -387,7 +395,7 @@ func (sl *ShortLong) LongURLFromShort(w http.ResponseWriter, r *http.Request) {
 	sl.wg.Add(1)
 	defer sl.wg.Done()
 
-	internalLongURLFromShort(sl.DB.Ptr, sl, w, r)
+	internalLongURLFromShort(sl, w, r)
 }
 
 // Обработчик формирования короткого представления по длинной. Формат JSON (POST "/api/shorten").
@@ -403,7 +411,7 @@ func (sl *ShortLong) ShortURLFromLongJSON(w http.ResponseWriter, r *http.Request
 	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
 
 	// Вся логика обработчика
-	internalShortURLFromLongJSON(sl.DB.Ptr, sl, w, r)
+	internalShortURLFromLongJSON(sl, w, r)
 }
 
 // Обработчик проверки связи с БД (GET "/ping").
@@ -440,7 +448,7 @@ func (sl *ShortLong) UserURLs(w http.ResponseWriter, r *http.Request) {
 	sl.BaseAddrShortURL = strings.TrimSuffix(sl.BaseAddrShortURL, "/")
 	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
 
-	internalUserURLs(sl.DB.Ptr, sl, w, r)
+	internalUserURLs(sl, w, r)
 }
 
 // Обработчик указания пар для асинхронного удаления (DELETE "/api/user/urls").
@@ -664,7 +672,7 @@ var OnceShortener sync.Once
 //	fl - флаги.
 //	os - наблюдатель.
 //	log - логгер.
-func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os observer.Action, log *zap.Logger) Actions {
+func NewShortenerActions(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os observer.Action, log *zap.Logger) ActionsHTTP {
 	OnceShortener.Do(func() {
 		shortener = &ShortLong{
 			List:             storage,
@@ -679,8 +687,19 @@ func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os o
 			mu:               sync.RWMutex{},
 			TrustedSubnet:    fl.TrustedSubnet,
 			ValueConnect:     0,
+			muF: muFunc{
+				muInternalShortURLFromLongJSONLayerWork: sync.Mutex{},
+				muInternalLongURLFromShortLayerWork:     sync.Mutex{},
+				muInternalUserURLsLayerWork:             sync.Mutex{},
+			},
 		}
 	})
+
+	return shortener
+}
+
+// Получение указателя на объект. Используется в RPC сервере, как источник конфигурации.
+func ShortenerForRPC() *ShortLong {
 
 	return shortener
 }
@@ -1299,11 +1318,10 @@ func internalShortURLFromLong(db *sql.DB, sl *ShortLong, w http.ResponseWriter, 
 //
 // Параметры:
 //
-//	db - указатель на БД
 //	sl - конфигурация.
 //	w - http.ResponseWriter.
 //	r - *http.Request.
-func internalLongURLFromShort(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Request) {
+func internalLongURLFromShort(sl *ShortLong, w http.ResponseWriter, r *http.Request) {
 
 	// Проверка аргументов.
 	if sl == nil {
@@ -1347,7 +1365,7 @@ func internalLongURLFromShort(db *sql.DB, sl *ShortLong, w http.ResponseWriter, 
 	}
 
 	// Логика.
-	long, err := internalLongURLFromShortLayerWork(db, sl, short)
+	long, err := InternalLongURLFromShortLayerWork(sl, short)
 	if err != nil {
 		switch err.Error() {
 		case "500":
@@ -1380,11 +1398,10 @@ func internalLongURLFromShort(db *sql.DB, sl *ShortLong, w http.ResponseWriter, 
 //
 // Параметры:
 //
-//	db - указатель на БД
 //	sl - конфигурация.
 //	w - http.ResponseWriter.
 //	r - *http.Request.
-func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Request) {
+func internalShortURLFromLongJSON(sl *ShortLong, w http.ResponseWriter, r *http.Request) {
 
 	// Проверка аргументов.
 	if sl == nil {
@@ -1432,7 +1449,7 @@ func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLong, w http.ResponseWrit
 	}
 
 	// Логика.
-	shortStr, flagConflict, err := internalShortURLFromLongJSONLayerWork(db, sl, rxJSON, uuidRx)
+	shortStr, flagConflict, err := InternalShortURLFromLongJSONLayerWork(sl, rxJSON, uuidRx)
 	if err != nil {
 		switch err.Error() {
 		case "500":
@@ -1771,11 +1788,10 @@ func markFlagDelDB(db *sql.DB, sl *ShortLong, shortURLs []string, uuidRx string)
 //
 // Параметры:
 //
-//	db - указатель на БД
 //	sl - конфигурация.
 //	w - http.ResponseWriter.
 //	r - *http.Request.
-func internalUserURLs(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Request) {
+func internalUserURLs(sl *ShortLong, w http.ResponseWriter, r *http.Request) {
 
 	// Проверка аргументов.
 	if sl == nil {
@@ -1798,7 +1814,7 @@ func internalUserURLs(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.
 	}
 
 	// Логика.
-	shortLong, err := internalUserURLsLayerWork(db, sl)
+	shortLong, err := InternalUserURLsLayerWork(sl)
 	if err != nil {
 		switch err.Error() {
 		case "500":
@@ -1945,7 +1961,7 @@ func processingObserver(body []byte, path string, sl *ShortLong, locationHeader 
 		}
 	case "/api/shorten":
 
-		var dataBodyJSON rxLongURL
+		var dataBodyJSON RxLongURL
 
 		if err := json.Unmarshal(body, &dataBodyJSON); err != nil {
 			sl.Log.Error("Ошибка json.Unmarshal", zap.Error(err))
