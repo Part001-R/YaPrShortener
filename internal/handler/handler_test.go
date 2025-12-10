@@ -327,10 +327,11 @@ func Test_internalShortURLFromLongJSON_SUCCESS(t *testing.T) {
 			ChForDelete: make(chan DeleteDB),
 			ChDoDelete:  make(chan struct{}),
 		},
-		BaseAddrShortURL: ":8080/",
-		ServerAddr:       ":8080",
-		FileStoragePath:  "storage.json",
-		Log:              log,
+		BaseAddrShortURL:  ":8080/",
+		ServerAddr:        ":8080",
+		FileStoragePath:   "storage.json",
+		Log:               log,
+		ActionsInternFunc: NewInstWorkFunc(),
 	}
 
 	testData := []struct {
@@ -779,10 +780,11 @@ func Test_internalLongURLFromShort_SUCCESS(t *testing.T) {
 			ChForDelete: make(chan DeleteDB),
 			ChDoDelete:  make(chan struct{}),
 		},
-		BaseAddrShortURL: "http://localhost:8080/",
-		ServerAddr:       ":8080",
-		FileStoragePath:  "storage.json",
-		Log:              log,
+		BaseAddrShortURL:  "http://localhost:8080/",
+		ServerAddr:        ":8080",
+		FileStoragePath:   "storage.json",
+		Log:               log,
+		ActionsInternFunc: NewInstWorkFunc(),
 	}
 
 	// Подготовка памы
@@ -1056,10 +1058,11 @@ func Test_internalUserURLs_SUCCESS(t *testing.T) {
 			ChForDelete: make(chan DeleteDB),
 			ChDoDelete:  make(chan struct{}),
 		},
-		BaseAddrShortURL: "http://localhost:8080/",
-		ServerAddr:       ":8080",
-		FileStoragePath:  "storage.json",
-		Log:              log,
+		BaseAddrShortURL:  "http://localhost:8080/",
+		ServerAddr:        ":8080",
+		FileStoragePath:   "storage.json",
+		Log:               log,
+		ActionsInternFunc: NewInstWorkFunc(),
 	}
 
 	// Подготовка памы.
@@ -2876,7 +2879,9 @@ func Test_Stats_DB(t *testing.T) {
 	ok = ResetNewShortener() // Так как инициализация через sync.Once
 	require.Equalf(t, true, ok, "сброс не выполнен: <%t>", ok)
 
-	inst := NewShortenerActions(storage, instDB, fl, obsSrc, log)
+	actionsWork := NewInstWorkFunc()
+
+	inst := NewShortenerActions(storage, instDB, fl, obsSrc, log, actionsWork)
 	assert.NotNil(t, inst, "отсутствует указатель")
 
 	// Данные для теста.
@@ -3007,7 +3012,9 @@ func Test_NewShortener_SUCCESS(t *testing.T) {
 	obsSrc := observer.NewObserver(log)
 
 	// Тест.
-	inst := NewShortenerActions(storage, instDB, fl, obsSrc, log)
+	actionsWork := NewInstWorkFunc()
+
+	inst := NewShortenerActions(storage, instDB, fl, obsSrc, log, actionsWork)
 	assert.NotNil(t, inst, "отсутствует указатель")
 }
 
@@ -3232,7 +3239,9 @@ func constructor() (ActionsHTTP, error) {
 	obsSrc := observer.NewObserver(log)
 
 	// Конструктор сервиса.
-	return NewShortenerActions(storage, instDB, fl, obsSrc, log), nil
+	actionsWork := NewInstWorkFunc()
+
+	return NewShortenerActions(storage, instDB, fl, obsSrc, log, actionsWork), nil
 }
 
 // constructorDB, конструктор сервиса, для тестов. Возвращает интерфейс, mock БД и ошибку.
@@ -3275,5 +3284,7 @@ func constructorDB() (ActionsHTTP, sqlmock.Sqlmock, error) {
 	obsSrc := observer.NewObserver(log)
 
 	// Конструктор сервиса.
-	return NewShortenerActions(storage, instDB, fl, obsSrc, log), mock, nil
+	actionsWork := NewInstWorkFunc()
+
+	return NewShortenerActions(storage, instDB, fl, obsSrc, log, actionsWork), mock, nil
 }

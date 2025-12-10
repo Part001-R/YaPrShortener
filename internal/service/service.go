@@ -108,7 +108,9 @@ func prepare() (*paramsURL, error) {
 	shortLong := handler.NewShortenerMemory()
 	shortLongDB := handler.NewShortenerDB(dbPtr)
 
-	storageLongShort := handler.NewShortenerActions(shortLong, shortLongDB, flags, observer, log)
+	actionsWork := handler.NewInstWorkFunc()
+
+	storageLongShort := handler.NewShortenerActions(shortLong, shortLongDB, flags, observer, log, actionsWork)
 	err = storageLongShort.LoadFileURL()
 	if err != nil {
 		return &paramsURL{}, fmt.Errorf("ошибка в prepare: функция storageLongShort.LoadFileURL вернула ошибку -> <%w>", err)
@@ -261,8 +263,12 @@ func startUpRPCServer(params *handler.ShortLong, txErr chan error, port string) 
 	}
 
 	// Получение экземпляра и параметрирование.
+	actionsWork := handler.NewInstWorkFunc()
+
 	s := grpc.NewServer()
-	pb.RegisterShortenerServiceServer(s, &servicerpc.ShortenerService{Conf: params})
+	pb.RegisterShortenerServiceServer(s, &servicerpc.ShortenerService{
+		Conf:    params,
+		Actions: actionsWork}) // Интерфейс функций work, обработчиков.
 
 	// Запуск.
 	params.Log.Info("Запуск RPC сервера", zap.String("address", port))

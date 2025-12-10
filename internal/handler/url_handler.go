@@ -66,19 +66,20 @@ type muFunc struct {
 
 // Сервис сокращения ссылок.
 type ShortLong struct {
-	List             *ShortLongURL
-	DB               *ShortLongDB
-	Observer         observer.Action
-	BaseAddrShortURL string
-	ServerAddr       string
-	FileStoragePath  string
-	Log              *zap.Logger
-	wg               sync.WaitGroup // механизм для безопасного выполнения кода.
-	stopping         bool           // true - признак, что сервис в процессе остановки.
-	mu               sync.RWMutex
-	TrustedSubnet    string // доверенная подсеть.
-	ValueConnect     int32  // количество подключений.
-	muF              muFunc // мьютексы для общих функций для HTTP и RPC.
+	List              *ShortLongURL
+	DB                *ShortLongDB
+	Observer          observer.Action
+	BaseAddrShortURL  string
+	ServerAddr        string
+	FileStoragePath   string
+	Log               *zap.Logger
+	wg                sync.WaitGroup // механизм для безопасного выполнения кода.
+	stopping          bool           // true - признак, что сервис в процессе остановки.
+	mu                sync.RWMutex
+	TrustedSubnet     string          // доверенная подсеть.
+	ValueConnect      int32           // количество подключений.
+	muF               muFunc          // мьютексы для общих функций для HTTP и RPC.
+	ActionsInternFunc ActionsWorkFunc // интерфесы слоев work в обработчиках.
 }
 
 // Для передачи содержимого файла в память.
@@ -672,7 +673,8 @@ var OnceShortener sync.Once
 //	fl - флаги.
 //	os - наблюдатель.
 //	log - логгер.
-func NewShortenerActions(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os observer.Action, log *zap.Logger) ActionsHTTP {
+//	work - интерфес функций work у для обработчиков.
+func NewShortenerActions(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os observer.Action, log *zap.Logger, work ActionsWorkFunc) ActionsHTTP {
 	OnceShortener.Do(func() {
 		shortener = &ShortLong{
 			List:             storage,
@@ -692,6 +694,7 @@ func NewShortenerActions(storage *ShortLongURL, db *ShortLongDB, fl *flags.Confi
 				muInternalLongURLFromShortLayerWork:     sync.Mutex{},
 				muInternalUserURLsLayerWork:             sync.Mutex{},
 			},
+			ActionsInternFunc: work,
 		}
 	})
 
@@ -1365,7 +1368,7 @@ func internalLongURLFromShort(sl *ShortLong, w http.ResponseWriter, r *http.Requ
 	}
 
 	// Логика.
-	long, err := InternalLongURLFromShortLayerWork(sl, short)
+	long, err := sl.ActionsInternFunc.InternalLongURLFromShortLayerWork(sl, short)
 	if err != nil {
 		switch err.Error() {
 		case "500":
@@ -1449,7 +1452,7 @@ func internalShortURLFromLongJSON(sl *ShortLong, w http.ResponseWriter, r *http.
 	}
 
 	// Логика.
-	shortStr, flagConflict, err := InternalShortURLFromLongJSONLayerWork(sl, rxJSON, uuidRx)
+	shortStr, flagConflict, err := sl.ActionsInternFunc.InternalShortURLFromLongJSONLayerWork(sl, rxJSON, uuidRx)
 	if err != nil {
 		switch err.Error() {
 		case "500":
@@ -1814,7 +1817,7 @@ func internalUserURLs(sl *ShortLong, w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Логика.
-	shortLong, err := InternalUserURLsLayerWork(sl)
+	shortLong, err := sl.ActionsInternFunc.InternalUserURLsLayerWork(sl)
 	if err != nil {
 		switch err.Error() {
 		case "500":

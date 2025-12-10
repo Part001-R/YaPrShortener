@@ -66,7 +66,9 @@ func Test_ShortenURL_RPC_SUCCESS(t *testing.T) {
 	ok = handler.ResetNewShortener() // Так как инициализация через sync.Once
 	require.Equalf(t, true, ok, "сброс не выполнен: <%t>", ok)
 
-	inst := handler.NewShortenerActions(storage, instDB, fl, obsSrc, log)
+	actionsWork := handler.NewInstWorkFunc()
+
+	inst := handler.NewShortenerActions(storage, instDB, fl, obsSrc, log, actionsWork)
 	assert.NotNil(t, inst, "отсутствует указатель")
 
 	conf := handler.ShortenerForRPC() // Получение указателя на конфигурацию.
@@ -78,7 +80,10 @@ func Test_ShortenURL_RPC_SUCCESS(t *testing.T) {
 	// Логика теста.
 	//
 
-	instRPC := ShortenerService{Conf: conf}
+	instRPC := ShortenerService{
+		Conf:    conf,
+		Actions: actionsWork,
+	}
 
 	// Добавление метаданных.
 	md := metadata.Pairs("authorization", "Foo")
@@ -156,7 +161,9 @@ func Test_ShortenURL_RPC_FAULT(t *testing.T) {
 	ok = handler.ResetNewShortener() // Так как инициализация через sync.Once
 	require.Equalf(t, true, ok, "сброс не выполнен: <%t>", ok)
 
-	inst := handler.NewShortenerActions(storage, instDB, fl, obsSrc, log)
+	actionsWork := handler.NewInstWorkFunc()
+
+	inst := handler.NewShortenerActions(storage, instDB, fl, obsSrc, log, actionsWork)
 	assert.NotNil(t, inst, "отсутствует указатель")
 
 	conf := handler.ShortenerForRPC() // Получение указателя на конфигурацию.
@@ -193,7 +200,10 @@ func Test_ShortenURL_RPC_FAULT(t *testing.T) {
 	for _, tt := range testData {
 		t.Run(tt.nameTest, func(t *testing.T) {
 
-			instRPC := ShortenerService{Conf: conf}
+			instRPC := ShortenerService{
+				Conf:    conf,
+				Actions: actionsWork,
+			}
 
 			if tt.mdUse {
 				// Добавление метаданных.
@@ -272,7 +282,9 @@ func Test_ExpandURL_RPC(t *testing.T) {
 	ok = handler.ResetNewShortener() // Так как инициализация через sync.Once
 	require.Equalf(t, true, ok, "сброс не выполнен: <%t>", ok)
 
-	inst := handler.NewShortenerActions(storage, instDB, fl, obsSrc, log)
+	actionsWork := handler.NewInstWorkFunc()
+
+	inst := handler.NewShortenerActions(storage, instDB, fl, obsSrc, log, actionsWork)
 	assert.NotNil(t, inst, "отсутствует указатель")
 
 	conf := handler.ShortenerForRPC() // Получение указателя на конфигурацию.
@@ -294,7 +306,10 @@ func Test_ExpandURL_RPC(t *testing.T) {
 	// Логика теста.
 	//
 
-	instRPC := ShortenerService{Conf: conf}
+	instRPC := ShortenerService{
+		Conf:    conf,
+		Actions: actionsWork,
+	}
 
 	req := &pb.URLExpandRequest{Id: short}
 
@@ -352,7 +367,9 @@ func Test_ListUserURLs_RPC(t *testing.T) {
 	ok = handler.ResetNewShortener() // Так как инициализация через sync.Once
 	require.Equalf(t, true, ok, "сброс не выполнен: <%t>", ok)
 
-	inst := handler.NewShortenerActions(storage, instDB, fl, obsSrc, log)
+	actionsWork := handler.NewInstWorkFunc()
+
+	inst := handler.NewShortenerActions(storage, instDB, fl, obsSrc, log, actionsWork)
 	assert.NotNil(t, inst, "отсутствует указатель")
 
 	conf := handler.ShortenerForRPC() // Получение указателя на конфигурацию.
@@ -378,7 +395,10 @@ func Test_ListUserURLs_RPC(t *testing.T) {
 	// Логика теста.
 	//
 
-	instRPC := ShortenerService{Conf: conf}
+	instRPC := ShortenerService{
+		Conf:    conf,
+		Actions: actionsWork,
+	}
 
 	res, err := instRPC.ListUserURLs(context.Background(), nil)
 	require.NoErrorf(t, err, "неожиданная ошибка:<%v>", err)
@@ -450,7 +470,9 @@ func Test_Full(t *testing.T) {
 	ok = handler.ResetNewShortener() // Так как инициализация через sync.Once
 	require.Equalf(t, true, ok, "сброс не выполнен: <%t>", ok)
 
-	inst := handler.NewShortenerActions(storage, instDB, fl, obsSrc, log)
+	actionsWork := handler.NewInstWorkFunc()
+
+	inst := handler.NewShortenerActions(storage, instDB, fl, obsSrc, log, actionsWork)
 	assert.NotNil(t, inst, "отсутствует указатель")
 
 	conf := handler.ShortenerForRPC() // Получение указателя на конфигурацию.
@@ -462,7 +484,10 @@ func Test_Full(t *testing.T) {
 	// Передача длинного URL и формирование короткого представления.
 	//
 
-	instRPC := ShortenerService{Conf: conf}
+	instRPC := ShortenerService{
+		Conf:    conf,
+		Actions: actionsWork,
+	}
 
 	// Добавление метаданных.
 	md := metadata.Pairs("authorization", "Foo")

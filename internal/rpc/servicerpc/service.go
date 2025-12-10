@@ -15,7 +15,8 @@ import (
 // ShortenerService, RPC сервер.
 type ShortenerService struct {
 	pb.UnimplementedShortenerServiceServer
-	Conf *handler.ShortLong
+	Conf    *handler.ShortLong      // конфигурация.
+	Actions handler.ActionsWorkFunc // интерфейс обработчиков work слоя.
 }
 
 // Представление пары сокращения и оригинального URL.
@@ -57,7 +58,7 @@ func (s *ShortenerService) ShortenURL(ctx context.Context, req *pb.URLShortenReq
 	var rxData handler.RxLongURL
 	rxData.URL = rxLongURL
 
-	short, flagConflict, err := handler.InternalShortURLFromLongJSONLayerWork(s.Conf, rxData, uuid)
+	short, flagConflict, err := s.Actions.InternalShortURLFromLongJSONLayerWork(s.Conf, rxData, uuid)
 	if err != nil {
 		switch err.Error() {
 		case "500":
@@ -108,7 +109,7 @@ func (s *ShortenerService) ExpandURL(ctx context.Context, req *pb.URLExpandReque
 	}
 
 	// Логика.
-	longURL, err := handler.InternalLongURLFromShortLayerWork(s.Conf, idRx)
+	longURL, err := s.Actions.InternalLongURLFromShortLayerWork(s.Conf, idRx)
 	if err != nil {
 		switch err.Error() {
 		case "500":
@@ -154,7 +155,7 @@ func (s *ShortenerService) ListUserURLs(ctx context.Context, req *emptypb.Empty)
 	}
 
 	// Логика.
-	shortLong, err := handler.InternalUserURLsLayerWork(s.Conf)
+	shortLong, err := s.Actions.InternalUserURLsLayerWork(s.Conf)
 	if err != nil {
 		switch err.Error() {
 		case "500":
