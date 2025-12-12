@@ -1265,55 +1265,58 @@ func internalShortURLFromLong(db *sql.DB, sl *ShortLong, w http.ResponseWriter, 
 	// Получение тела запроса.
 	rxLongURL, uuidRx, err := InternalShortURLFromLongLayerRx(r, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		case "400":
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentLogger) ||
+			errors.Is(err, ErrNilPointerArgumentR) ||
+			errors.Is(err, ErrReadBody) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		if errors.Is(err, ErrEmptyDataBody) {
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Обработка.
 	result, flagConflict, err := InternalShortURLFromLongLayerWork(db, sl, rxLongURL, uuidRx)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentSL) ||
+			errors.Is(err, ErrEmptyArgumentLongURL) ||
+			errors.Is(err, ErrFunc) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Ответ.
 	err = InternalShortURLFromLongLayerTx(w, result, flagConflict, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentW) ||
+			errors.Is(err, ErrNoContentArgumentStr) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -1350,47 +1353,52 @@ func internalLongURLFromShort(sl *ShortLong, w http.ResponseWriter, r *http.Requ
 	// Приём.
 	short, err := internalLongURLFromShortLayerRx(r, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		case "400":
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentLogger) ||
+			errors.Is(err, ErrNilPointerArgumentR) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		if errors.Is(err, ErrNoContent) {
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Логика.
 	long, err := sl.ActionsInternFunc.InternalLongURLFromShortLayerWork(sl, short)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		case "400":
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		case "404":
-			http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
-			return
-		case "410":
-			http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentSL) ||
+			errors.Is(err, ErrFunc) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		if errors.Is(err, ErrNoContentArgumentRxData) ||
+			errors.Is(err, ErrNoContent) {
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		if errors.Is(err, ErrNotFound) {
+			http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
+			return
+		}
+		if errors.Is(err, ErrGone) {
+			http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
+			return
+		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Ответ.
@@ -1434,55 +1442,61 @@ func internalShortURLFromLongJSON(sl *ShortLong, w http.ResponseWriter, r *http.
 	// Приём.
 	rxJSON, uuidRx, err := internalShortURLFromLongJSONLayerRx(r, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		case "400":
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentLogger) ||
+			errors.Is(err, ErrNilPointerArgumentR) ||
+			errors.Is(err, ErrUnmarshal) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		if errors.Is(err, ErrNoContent) ||
+			errors.Is(err, ErrUnmarshal) {
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Логика.
 	shortStr, flagConflict, err := sl.ActionsInternFunc.InternalShortURLFromLongJSONLayerWork(sl, rxJSON, uuidRx)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentSL) ||
+			errors.Is(err, ErrNoContent) ||
+			errors.Is(err, ErrFunc) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Ответ.
 	err = internalShortURLFromLongJSONLayerTx(w, shortStr, flagConflict, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentLogger) ||
+			errors.Is(err, ErrNilPointerArgumentW) ||
+			errors.Is(err, ErrNoContent) ||
+			errors.Is(err, ErrMarshal) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопазнанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -1588,58 +1602,62 @@ func internalShortURLFromLongBatch(db *sql.DB, sl *ShortLong, w http.ResponseWri
 	// Приём.
 	rxLongURLBatch, uuidRx, err := internalShortURLFromLongBatchLayerRx(r, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "400":
+		if errors.Is(err, ErrUnmarshal) ||
+			errors.Is(err, ErrNoContent) {
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("code", err.Error()),
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		}
+		if errors.Is(err, ErrNilPointerArgumentLogger) ||
+			errors.Is(err, ErrNilPointerArgumentR) ||
+			errors.Is(err, ErrReadBody) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Обработка.
 	batchShortURL, err := internalShortURLFromLongBatchLayerWork(db, sl, rxLongURLBatch, uuidRx)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("code", err.Error()),
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentSL) ||
+			errors.Is(err, ErrNilPointerLongBatch) ||
+			errors.Is(err, ErrNoContentLongBatch) ||
+			errors.Is(err, ErrFunc) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Ответ.
 	err = internalShortURLFromLongBatchLayerTx(w, batchShortURL, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("code", err.Error()),
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentW) ||
+			errors.Is(err, ErrNilPointerShortBatch) ||
+			errors.Is(err, ErrNoContentShortBatch) ||
+			errors.Is(err, ErrMarshal) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -1679,43 +1697,44 @@ func internalDeleteUserURLs(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r 
 	// Приём.
 	rxArray, uuid, err := internalDeleteUserURLsLayerRx(r, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "400":
+		if errors.Is(err, ErrDecode) {
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("code", err.Error()),
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		}
+		if errors.Is(err, ErrNilPointerArgumentLogger) ||
+			errors.Is(err, ErrNilPointerArgumentR) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Логика.
 	err = internalDeleteUserURLsLayerWork(db, sl, rxArray, uuid)
 	if err != nil {
-		switch err.Error() {
-		case "400":
+		if errors.Is(err, ErrNoContent) {
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("code", err.Error()),
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		}
+		if errors.Is(err, ErrNilPointerArgumentSL) ||
+			errors.Is(err, ErrNoContentArgumentRxData) ||
+			errors.Is(err, ErrFunc) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Ответ.

@@ -20,12 +20,14 @@ type internalWork interface {
 	InternalUserURLsLayerWork(sl *ShortLong) ([]txShortURLOriginalURL, error)
 }
 
+// Интерфейс.
 type ActionsWorkFunc interface {
 	internalWork
 }
 
 var workFunc *internWorkFunc
 
+// Конструктор.
 func NewInstWorkFunc() ActionsWorkFunc {
 	onceInit.Do(func() {
 		workFunc = &internWorkFunc{}
@@ -42,16 +44,14 @@ func NewInstWorkFunc() ActionsWorkFunc {
 //	uuidRx - принятый ID.
 func (i internWorkFunc) InternalShortURLFromLongJSONLayerWork(sl *ShortLong, rxJSON RxLongURL, uuidRx string) (short string, flagConflict bool, err error) {
 
-	fmt.Printf("=== Вход в функцию") //======================
-
 	// Проверка аргументов.
 	if sl == nil {
-		log.Println("в аргементе sl, функции internalShortURLFromLongJSONLayerWork, нет указателя")
-		return "", false, ErrStatusInternalServerError
+		log.Println("в аргументе sl, функции internalShortURLFromLongJSONLayerWork, нет указателя")
+		return "", false, ErrNilPointerArgumentSL
 	}
 	if rxJSON.URL == "" {
-		sl.Log.Error("в аргементе rxJSON.URL нет данных")
-		return "", false, ErrStatusInternalServerError
+		sl.Log.Error("в аргументе rxJSON.URL нет данных")
+		return "", false, ErrNoContent
 	}
 
 	sl.muF.muInternalShortURLFromLongJSONLayerWork.Lock()
@@ -69,7 +69,7 @@ func (i internWorkFunc) InternalShortURLFromLongJSONLayerWork(sl *ShortLong, rxJ
 				zap.Error(err),
 				zap.String("longURL", rxJSON.URL),
 			)
-			return "", false, ErrStatusInternalServerError
+			return "", false, ErrFunc
 		}
 
 		// Ответ.
@@ -96,11 +96,11 @@ func (i internWorkFunc) InternalLongURLFromShortLayerWork(sl *ShortLong, short s
 	// Проверка аргументов.
 	if sl == nil {
 		log.Println("в аргументе sl, функции internalLongURLFromShortLayerWork, нет указателя")
-		return "", ErrStatusInternalServerError
+		return "", ErrNilPointerArgumentSL
 	}
 	if short == "" {
 		sl.Log.Error("в аргументе rxData нет данных")
-		return "", ErrStatusBadRequest
+		return "", ErrNoContentArgumentRxData
 	}
 
 	sl.muF.muInternalLongURLFromShortLayerWork.Lock()
@@ -113,21 +113,21 @@ func (i internWorkFunc) InternalLongURLFromShortLayerWork(sl *ShortLong, short s
 
 	if sl.DB.Ptr != nil { // БД.
 
-		myErr := fmt.Sprintf("строка с: <%s> не найдена", short)
+		myErr := fmt.Errorf("строка с: <%s> не найдена", short)
 
 		long, err = readLongAndFlagByShortDB(sl.DB.Ptr, short)
-		if err != nil && err.Error() == myErr {
-			return "", ErrStatusNotFound // Если запись в БД нет.
+		if err != nil && errors.Is(err, myErr) {
+			return "", ErrNotFound
 		}
 		if err != nil {
 			sl.Log.Error("Ошибка в функции readLongAndFlagByShortDB",
 				zap.Error(err),
 			)
-			return "", ErrStatusInternalServerError
+			return "", ErrFunc
 		}
 
 		if long == "" {
-			return "", ErrStatusGone // Если запись есть, но взведён флаг deleteflag.
+			return "", ErrGone // Если запись есть, но взведён флаг deleteflag.
 		}
 	}
 
@@ -135,8 +135,10 @@ func (i internWorkFunc) InternalLongURLFromShortLayerWork(sl *ShortLong, short s
 
 		long, ok = sl.List.LongByShort[short]
 		if !ok {
-			sl.Log.Error(fmt.Sprintf("в мапе LongByShort, нет признака существования ключа:<%s>", short))
-			return "", ErrStatusBadRequest
+			sl.Log.Error("в мапе LongByShort, нет признака существования ключа",
+				zap.String("ключ", short),
+			)
+			return "", ErrNoContent
 		}
 		long = strings.Trim(long, "\"")
 	}
@@ -155,7 +157,7 @@ func (i internWorkFunc) InternalUserURLsLayerWork(sl *ShortLong) ([]txShortURLOr
 	// Проверка аргументов.
 	if sl == nil {
 		log.Printf("в аргементе sl, функции internalUserURLsLayerWork, нет указателя")
-		return nil, ErrStatusInternalServerError
+		return nil, ErrNilPointerArgumentSL
 	}
 
 	sl.muF.muInternalUserURLsLayerWork.Lock()
@@ -172,7 +174,7 @@ func (i internWorkFunc) InternalUserURLsLayerWork(sl *ShortLong) ([]txShortURLOr
 			sl.Log.Error("Ошибка в функции GetAllShortenerDB",
 				zap.Error(err),
 			)
-			return nil, ErrStatusInternalServerError
+			return nil, fmt.Errorf("ошибка в функции GetAllShortenerDB:<%w>", err)
 		}
 
 		for k, v := range shortLongDB {
@@ -186,7 +188,7 @@ func (i internWorkFunc) InternalUserURLsLayerWork(sl *ShortLong) ([]txShortURLOr
 			sl.Log.Error("Ошибка в функции ClearShortenerTable",
 				zap.Error(err),
 			)
-			return nil, ErrStatusInternalServerError
+			return nil, fmt.Errorf("ошибка в функции ClearShortenerTable:<%w>", err)
 		}
 
 	}
