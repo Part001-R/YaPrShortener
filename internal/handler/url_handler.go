@@ -13,11 +13,15 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Part001-R/YaPrShortener/internal/service/flags"
@@ -53,18 +57,29 @@ type ShortLongDB struct {
 	ChDoDelete  chan struct{}
 }
 
+// Мьютексы для общих функция для HTTP и RPC.
+type muFunc struct {
+	muInternalShortURLFromLongJSONLayerWork sync.Mutex
+	muInternalLongURLFromShortLayerWork     sync.Mutex
+	muInternalUserURLsLayerWork             sync.Mutex
+}
+
 // Сервис сокращения ссылок.
 type ShortLong struct {
-	List             *ShortLongURL
-	DB               *ShortLongDB
-	Observer         observer.Action
-	BaseAddrShortURL string
-	ServerAddr       string
-	FileStoragePath  string
-	Log              *zap.Logger
-	wg               sync.WaitGroup // механизм для безопасного выполнения кода.
-	stopping         bool           // true - признак, что сервис в процессе остановки.
-	mu               sync.RWMutex
+	List              *ShortLongURL
+	DB                *ShortLongDB
+	Observer          observer.Action
+	BaseAddrShortURL  string
+	ServerAddr        string
+	FileStoragePath   string
+	Log               *zap.Logger
+	wg                sync.WaitGroup // механизм для безопасного выполнения кода.
+	stopping          bool           // true - признак, что сервис в процессе остановки.
+	mu                sync.RWMutex
+	TrustedSubnet     string          // доверенная подсеть.
+	ValueConnect      int32           // количество подключений.
+	muF               muFunc          // мьютексы для общих функций для HTTP и RPC.
+	ActionsInternFunc ActionsWorkFunc // интерфесы слоев work в обработчиках.
 }
 
 // Для передачи содержимого файла в память.
@@ -75,7 +90,7 @@ type EventURL struct {
 }
 
 // Для длинного представления URL.
-type rxLongURL struct {
+type RxLongURL struct {
 	URL string `json:"url"`
 }
 
@@ -102,16 +117,23 @@ type txShortURLOriginalURL struct {
 	OriginalURL string `json:"original_url"`
 }
 
-type handlers interface {
+// Для передачи данных статистики.
+type txStats struct {
+	URLs  int `json:"urls"`  // количество сокращённых URL в сервисе
+	Users int `json:"users"` // количество пользователей в сервисе
+}
+
+type handlersHTTP interface {
 	ShortURLFromLong(w http.ResponseWriter, r *http.Request)
 	LongURLFromShort(w http.ResponseWriter, r *http.Request)
 	ShortURLFromLongJSON(w http.ResponseWriter, r *http.Request)
 	ShortURLFromLongBatch(w http.ResponseWriter, r *http.Request)
 	UserURLs(w http.ResponseWriter, r *http.Request)
 	DeleteUserURLs(w http.ResponseWriter, r *http.Request)
+	Stats(w http.ResponseWriter, r *http.Request)
 }
 
-type systemAct interface {
+type systemActHTTP interface {
 	PingDB(w http.ResponseWriter, r *http.Request)
 	WaitFinActions()
 	SetFlagStopping()
@@ -120,26 +142,29 @@ type systemAct interface {
 	IsFlagStopping() bool
 }
 
-type file interface {
+type fileHTTP interface {
 	LoadFileURL() error
 }
 
-type middleware interface {
+type middlewareHTTP interface {
 	Middleware(h http.Handler) http.Handler
 	MiddlewareAudit(h http.Handler) http.Handler
+	MiddlewareTrustSubnet(h http.Handler) http.Handler
+	MiddlewareCountConnect(next http.Handler) http.Handler
 }
 
-// Основной интерфейс.
-type Actions interface {
-	middleware
-	systemAct
-	handlers
-	file
+// Основной интерфейс HTTP.
+type ActionsHTTP interface {
+	middlewareHTTP
+	systemActHTTP
+	handlersHTTP
+	fileHTTP
 }
 
 // Реализация проверки кодировки и формирование длительности выполнения обработчика запроса.
 func (sl *ShortLong) Middleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
 		ow := w
 
 		// Проверка поддерживает ли сервер запрашиваемую клиентом кодировку
@@ -272,6 +297,64 @@ func (sl *ShortLong) MiddlewareAudit(h http.Handler) http.Handler {
 	})
 }
 
+// Реализация проверки IP адреса, на вхождение в доверенную подсеть.
+func (sl *ShortLong) MiddlewareTrustSubnet(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		// Проверка для /api/internal/stats
+		if r.URL.Path == "/api/internal/stats" {
+			clientIP := r.Header.Get("X-Real-IP")
+
+			if clientIP == "" {
+				sl.Log.Info("отклонён HTTP запрос",
+					zap.String("URI", r.RequestURI),
+					zap.String("метод", r.Method),
+					zap.String("причина", "нет данных в заголовке X-Real-IP"),
+				)
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+
+			if sl.TrustedSubnet == "" {
+				sl.Log.Info("отклонён HTTP запрос",
+					zap.String("URI", r.RequestURI),
+					zap.String("метод", r.Method),
+					zap.String("причина", "нет инициализации значения доверенной подсети"),
+				)
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+
+			if !sl.isTrustedIP(clientIP) {
+				sl.Log.Info("отклонён HTTP запрос",
+					zap.String("URI", r.RequestURI),
+					zap.String("метод", r.Method),
+					zap.String("причина", "IP не входит в доверенную подсеть"),
+					zap.String("IP", clientIP),
+				)
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+		}
+
+		// Передаем управление следующему обработчику
+		next.ServeHTTP(w, r)
+	})
+}
+
+// Контроль активных подключений к сервису.
+func (sl *ShortLong) MiddlewareCountConnect(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		// Косвенный контроль количества пользователей.
+		atomic.AddInt32(&sl.ValueConnect, 1)
+		defer atomic.AddInt32(&sl.ValueConnect, -1)
+
+		// Передаем управление следующему обработчику
+		next.ServeHTTP(w, r)
+	})
+}
+
 // Обработчик формирования короткого представления из длинной (POST "/").
 func (sl *ShortLong) ShortURLFromLong(w http.ResponseWriter, r *http.Request) {
 
@@ -313,7 +396,7 @@ func (sl *ShortLong) LongURLFromShort(w http.ResponseWriter, r *http.Request) {
 	sl.wg.Add(1)
 	defer sl.wg.Done()
 
-	internalLongURLFromShort(sl.DB.Ptr, sl, w, r)
+	internalLongURLFromShort(sl, w, r)
 }
 
 // Обработчик формирования короткого представления по длинной. Формат JSON (POST "/api/shorten").
@@ -329,7 +412,7 @@ func (sl *ShortLong) ShortURLFromLongJSON(w http.ResponseWriter, r *http.Request
 	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
 
 	// Вся логика обработчика
-	internalShortURLFromLongJSON(sl.DB.Ptr, sl, w, r)
+	internalShortURLFromLongJSON(sl, w, r)
 }
 
 // Обработчик проверки связи с БД (GET "/ping").
@@ -366,7 +449,7 @@ func (sl *ShortLong) UserURLs(w http.ResponseWriter, r *http.Request) {
 	sl.BaseAddrShortURL = strings.TrimSuffix(sl.BaseAddrShortURL, "/")
 	sl.BaseAddrShortURL = sl.BaseAddrShortURL + "/"
 
-	internalUserURLs(sl.DB.Ptr, sl, w, r)
+	internalUserURLs(sl, w, r)
 }
 
 // Обработчик указания пар для асинхронного удаления (DELETE "/api/user/urls").
@@ -441,6 +524,40 @@ func (sl *ShortLong) LoadFileURL() error {
 	return nil
 }
 
+// isTrustedIP проверяет, находится ли IP в доверенной подсети. Возвращается true - если да.
+func (sl *ShortLong) isTrustedIP(ipStr string) bool {
+
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+
+	_, subnet, err := net.ParseCIDR(sl.TrustedSubnet)
+	if err != nil {
+		return false
+	}
+
+	// Результат.
+	return subnet.Contains(ip)
+}
+
+// Предоставление информации:
+// - количество сокращённых URL в сервисе;
+// - количество пользователей в сервисе.
+//
+// GET /api/internal/stats
+func (sl *ShortLong) Stats(w http.ResponseWriter, r *http.Request) {
+
+	sl.List.mu.RLock()
+	defer sl.List.mu.RUnlock()
+
+	sl.wg.Add(1)
+	defer sl.wg.Done()
+
+	// Вся логика обработчика.
+	internalStats(sl, w, r)
+}
+
 // ---
 
 // Ожидание завершения работы активных обработчиков.
@@ -504,7 +621,7 @@ func NewShortenerMemory() *ShortLongURL {
 var shortenrDB *ShortLongDB
 
 // Для обеспечения единоразового выполняения инициализации конструктором.
-var OnceDB sync.Once
+var onceDB sync.Once
 
 // Конструктор. Возвращает хранилище БД.
 //
@@ -512,7 +629,7 @@ var OnceDB sync.Once
 //
 //	db - указатель на БД.
 func NewShortenerDB(db *sql.DB) *ShortLongDB {
-	OnceDB.Do(func() {
+	onceDB.Do(func() {
 		shortenrDB = &ShortLongDB{
 			Ptr:         db,
 			mu:          sync.RWMutex{},
@@ -521,6 +638,24 @@ func NewShortenerDB(db *sql.DB) *ShortLongDB {
 		}
 	})
 	return shortenrDB
+}
+
+// ResetNewShortenerDB, реализует сброс экземплара. Возвращается true - если сброс выполнен.
+func ResetNewShortenerDB() bool {
+	// Определение места вызова функции.
+	_, file, _, ok := runtime.Caller(1) // 1 - получить вызывающую функцию
+	if !ok {
+		log.Fatal("Ошибка в функции InstReset. Не удалось получить информацию о файле")
+	}
+	fileName := path.Base(file)
+
+	// Проверка, что функция запускается из файла с тестами.
+	if strings.HasSuffix(fileName, "_test.go") {
+		onceDB = sync.Once{}
+		shortenrDB = nil
+		return true
+	}
+	return false
 }
 
 // Сконфигурироанный экземпляр сервиса.
@@ -538,7 +673,8 @@ var OnceShortener sync.Once
 //	fl - флаги.
 //	os - наблюдатель.
 //	log - логгер.
-func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os observer.Action, log *zap.Logger) Actions {
+//	work - интерфес функций work у для обработчиков.
+func NewShortenerActions(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os observer.Action, log *zap.Logger, work ActionsWorkFunc) ActionsHTTP {
 	OnceShortener.Do(func() {
 		shortener = &ShortLong{
 			List:             storage,
@@ -551,10 +687,43 @@ func NewShortener(storage *ShortLongURL, db *ShortLongDB, fl *flags.Config, os o
 			wg:               sync.WaitGroup{},
 			stopping:         false,
 			mu:               sync.RWMutex{},
+			TrustedSubnet:    fl.TrustedSubnet,
+			ValueConnect:     0,
+			muF: muFunc{
+				muInternalShortURLFromLongJSONLayerWork: sync.Mutex{},
+				muInternalLongURLFromShortLayerWork:     sync.Mutex{},
+				muInternalUserURLsLayerWork:             sync.Mutex{},
+			},
+			ActionsInternFunc: work,
 		}
 	})
 
 	return shortener
+}
+
+// Получение указателя на объект. Используется в RPC сервере, как источник конфигурации.
+func ShortenerForRPC() *ShortLong {
+
+	return shortener
+}
+
+// ResetNewShortener, реализует сброс экземплара. Возвращается true - если сброс выполнен.
+func ResetNewShortener() bool {
+
+	// Определение места вызова функции.
+	_, file, _, ok := runtime.Caller(1) // 1 - получить вызывающую функцию
+	if !ok {
+		log.Fatal("Ошибка в функции InstReset. Не удалось получить информацию о файле")
+	}
+	fileName := path.Base(file)
+
+	// Проверка, что функция запускается из файла с тестами.
+	if strings.HasSuffix(fileName, "_test.go") {
+		OnceShortener = sync.Once{}
+		shortener = nil
+		return true
+	}
+	return false
 }
 
 // Функция наполняет мапы новыми парами соответствий длинных и коротких ссылок. Возвращает короткую ссылку и ошибку.
@@ -1096,55 +1265,58 @@ func internalShortURLFromLong(db *sql.DB, sl *ShortLong, w http.ResponseWriter, 
 	// Получение тела запроса.
 	rxLongURL, uuidRx, err := InternalShortURLFromLongLayerRx(r, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		case "400":
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentLogger) ||
+			errors.Is(err, ErrNilPointerArgumentR) ||
+			errors.Is(err, ErrReadBody) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		if errors.Is(err, ErrEmptyDataBody) {
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Обработка.
 	result, flagConflict, err := InternalShortURLFromLongLayerWork(db, sl, rxLongURL, uuidRx)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentSL) ||
+			errors.Is(err, ErrEmptyArgumentLongURL) ||
+			errors.Is(err, ErrFunc) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Ответ.
 	err = InternalShortURLFromLongLayerTx(w, result, flagConflict, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentW) ||
+			errors.Is(err, ErrNoContentArgumentStr) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -1152,11 +1324,10 @@ func internalShortURLFromLong(db *sql.DB, sl *ShortLong, w http.ResponseWriter, 
 //
 // Параметры:
 //
-//	db - указатель на БД
 //	sl - конфигурация.
 //	w - http.ResponseWriter.
 //	r - *http.Request.
-func internalLongURLFromShort(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Request) {
+func internalLongURLFromShort(sl *ShortLong, w http.ResponseWriter, r *http.Request) {
 
 	// Проверка аргументов.
 	if sl == nil {
@@ -1182,47 +1353,52 @@ func internalLongURLFromShort(db *sql.DB, sl *ShortLong, w http.ResponseWriter, 
 	// Приём.
 	short, err := internalLongURLFromShortLayerRx(r, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		case "400":
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentLogger) ||
+			errors.Is(err, ErrNilPointerArgumentR) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		if errors.Is(err, ErrNoContent) {
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Логика.
-	long, err := internalLongURLFromShortLayerWork(db, sl, short)
+	long, err := sl.ActionsInternFunc.InternalLongURLFromShortLayerWork(sl, short)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		case "400":
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		case "404":
-			http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
-			return
-		case "410":
-			http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentSL) ||
+			errors.Is(err, ErrFunc) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		if errors.Is(err, ErrNoContentArgumentRxData) ||
+			errors.Is(err, ErrNoContent) {
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		if errors.Is(err, ErrNotFound) {
+			http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
+			return
+		}
+		if errors.Is(err, ErrGone) {
+			http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
+			return
+		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Ответ.
@@ -1233,11 +1409,10 @@ func internalLongURLFromShort(db *sql.DB, sl *ShortLong, w http.ResponseWriter, 
 //
 // Параметры:
 //
-//	db - указатель на БД
 //	sl - конфигурация.
 //	w - http.ResponseWriter.
 //	r - *http.Request.
-func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Request) {
+func internalShortURLFromLongJSON(sl *ShortLong, w http.ResponseWriter, r *http.Request) {
 
 	// Проверка аргументов.
 	if sl == nil {
@@ -1267,55 +1442,61 @@ func internalShortURLFromLongJSON(db *sql.DB, sl *ShortLong, w http.ResponseWrit
 	// Приём.
 	rxJSON, uuidRx, err := internalShortURLFromLongJSONLayerRx(r, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		case "400":
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentLogger) ||
+			errors.Is(err, ErrNilPointerArgumentR) ||
+			errors.Is(err, ErrUnmarshal) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		if errors.Is(err, ErrNoContent) ||
+			errors.Is(err, ErrUnmarshal) {
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Логика.
-	shortStr, flagConflict, err := internalShortURLFromLongJSONLayerWork(db, sl, rxJSON, uuidRx)
+	shortStr, flagConflict, err := sl.ActionsInternFunc.InternalShortURLFromLongJSONLayerWork(sl, rxJSON, uuidRx)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentSL) ||
+			errors.Is(err, ErrNoContent) ||
+			errors.Is(err, ErrFunc) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Ответ.
 	err = internalShortURLFromLongJSONLayerTx(w, shortStr, flagConflict, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentLogger) ||
+			errors.Is(err, ErrNilPointerArgumentW) ||
+			errors.Is(err, ErrNoContent) ||
+			errors.Is(err, ErrMarshal) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопазнанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -1421,58 +1602,62 @@ func internalShortURLFromLongBatch(db *sql.DB, sl *ShortLong, w http.ResponseWri
 	// Приём.
 	rxLongURLBatch, uuidRx, err := internalShortURLFromLongBatchLayerRx(r, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "400":
+		if errors.Is(err, ErrUnmarshal) ||
+			errors.Is(err, ErrNoContent) {
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("code", err.Error()),
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		}
+		if errors.Is(err, ErrNilPointerArgumentLogger) ||
+			errors.Is(err, ErrNilPointerArgumentR) ||
+			errors.Is(err, ErrReadBody) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Обработка.
 	batchShortURL, err := internalShortURLFromLongBatchLayerWork(db, sl, rxLongURLBatch, uuidRx)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("code", err.Error()),
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentSL) ||
+			errors.Is(err, ErrNilPointerLongBatch) ||
+			errors.Is(err, ErrNoContentLongBatch) ||
+			errors.Is(err, ErrFunc) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Ответ.
 	err = internalShortURLFromLongBatchLayerTx(w, batchShortURL, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("code", err.Error()),
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		if errors.Is(err, ErrNilPointerArgumentW) ||
+			errors.Is(err, ErrNilPointerShortBatch) ||
+			errors.Is(err, ErrNoContentShortBatch) ||
+			errors.Is(err, ErrMarshal) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -1512,43 +1697,44 @@ func internalDeleteUserURLs(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r 
 	// Приём.
 	rxArray, uuid, err := internalDeleteUserURLsLayerRx(r, sl.Log)
 	if err != nil {
-		switch err.Error() {
-		case "400":
+		if errors.Is(err, ErrDecode) {
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("code", err.Error()),
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		}
+		if errors.Is(err, ErrNilPointerArgumentLogger) ||
+			errors.Is(err, ErrNilPointerArgumentR) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Логика.
 	err = internalDeleteUserURLsLayerWork(db, sl, rxArray, uuid)
 	if err != nil {
-		switch err.Error() {
-		case "400":
+		if errors.Is(err, ErrNoContent) {
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return
-		case "500":
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		default:
-			sl.Log.Error("Код ошибки не опознан",
-				zap.String("code", err.Error()),
-				zap.String("method", r.Method),
-				zap.String("url", r.URL.String()),
-			)
+		}
+		if errors.Is(err, ErrNilPointerArgumentSL) ||
+			errors.Is(err, ErrNoContentArgumentRxData) ||
+			errors.Is(err, ErrFunc) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		sl.Log.Error("Неопознанная ошибка",
+			zap.String("err", err.Error()),
+			zap.String("method", r.Method),
+			zap.String("url", r.URL.String()),
+		)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
 	}
 
 	// Ответ.
@@ -1624,11 +1810,10 @@ func markFlagDelDB(db *sql.DB, sl *ShortLong, shortURLs []string, uuidRx string)
 //
 // Параметры:
 //
-//	db - указатель на БД
 //	sl - конфигурация.
 //	w - http.ResponseWriter.
 //	r - *http.Request.
-func internalUserURLs(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.Request) {
+func internalUserURLs(sl *ShortLong, w http.ResponseWriter, r *http.Request) {
 
 	// Проверка аргументов.
 	if sl == nil {
@@ -1651,7 +1836,7 @@ func internalUserURLs(db *sql.DB, sl *ShortLong, w http.ResponseWriter, r *http.
 	}
 
 	// Логика.
-	shortLong, err := internalUserURLsLayerWork(db, sl)
+	shortLong, err := sl.ActionsInternFunc.InternalUserURLsLayerWork(sl)
 	if err != nil {
 		switch err.Error() {
 		case "500":
@@ -1798,7 +1983,7 @@ func processingObserver(body []byte, path string, sl *ShortLong, locationHeader 
 		}
 	case "/api/shorten":
 
-		var dataBodyJSON rxLongURL
+		var dataBodyJSON RxLongURL
 
 		if err := json.Unmarshal(body, &dataBodyJSON); err != nil {
 			sl.Log.Error("Ошибка json.Unmarshal", zap.Error(err))
@@ -1824,4 +2009,117 @@ func processingObserver(body []byte, path string, sl *ShortLong, locationHeader 
 	}
 
 	sl.Observer.Notify(auditEvent)
+}
+
+// Функция содержит логику обработчика Stats.
+//
+// Параметры:
+//
+//	sl - конфигурация.
+//	w - http.ResponseWriter.
+//	r - *http.Request.
+func internalStats(sl *ShortLong, w http.ResponseWriter, r *http.Request) {
+
+	// Проверка аргументов.
+	if sl == nil {
+		log.Println("Ошибка в функции internalStats. В аргументе sl нет указателя")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if sl.Log == nil {
+		log.Println("Ошибка в функции internalStats. В аргументе sl.Log нет указателя")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if r == nil {
+		sl.Log.Error("Ошибка в функции internalStats. В аргументе r нет указателя")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if w == nil {
+		sl.Log.Error("Ошибка в функции internalStats. В аргументе w нет указателя")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// Логика.
+	valueURLs, valueUsers, err := internalStatsLayerWork(sl)
+	if err != nil {
+		switch err.Error() {
+		case "500":
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		default:
+			sl.Log.Error("Код ошибки не опознан",
+				zap.String("code", err.Error()),
+				zap.String("method", r.Method),
+				zap.String("url", r.URL.String()),
+				zap.String("func", "internalStatsLayerWork"),
+			)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Ответ.
+	err = internalStatsLayerTx(w, sl, valueURLs, valueUsers)
+	if err != nil {
+		switch err.Error() {
+		case "500":
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		default:
+			sl.Log.Error("Код ошибки не опознан",
+				zap.String("code", err.Error()),
+				zap.String("method", r.Method),
+				zap.String("url", r.URL.String()),
+				zap.String("func", "internalStatsLayerTx"),
+			)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+// Функция запрашивает у БД количество записей с сокращёнными ссылками. Возвращается количество записей и ошибка.
+//
+// Параметры:
+//
+//	sl - указатель на конфигурацию сервиса.
+func valueEntriesDB(sl *ShortLong) (int, error) {
+
+	// Проверка аргументов.
+	if sl.DB.Ptr == nil {
+		return 0, errors.New("в аргументе db нет указателя")
+	}
+
+	sl.DB.mu.RLock()
+	defer sl.DB.mu.RUnlock()
+
+	// Логика.
+	req := `SELECT COALESCE(COUNT(*), 0) FROM shortener;`
+	var count int
+
+	err := sl.DB.Ptr.QueryRow(req).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка при выполнении запроса: <%w>", err)
+	}
+
+	// Результат.
+	return count, nil
+}
+
+// Функция запрашивает у in-memory количество записей с сокращёнными ссылками. Возвращается количество записей и ошибка.
+//
+// Параметры:
+//
+//	sl - указатель на конфигурацию сервиса.
+func valueEntriesInMemory(sl *ShortLong) (int, error) {
+
+	sl.List.mu.RLock()
+	defer sl.List.mu.RUnlock()
+
+	valueURLs := len(sl.List.LongByShort)
+
+	return valueURLs, nil
 }
